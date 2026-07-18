@@ -1,0 +1,87 @@
+seed: 42
+device: cpu
+
+sacr:
+  in_channels: 3
+  feature_channels: 32
+  num_seg_classes: 5
+  geom_dim: 4
+  geom_hidden: [64, 32]
+  struct_dim: 32
+  depth_pool_regions: 3
+  lambda_geom: 1.0
+  mu_smooth: 0.1
+  lr: 3.0e-4
+
+camr:
+  pose_dim: 7
+  imu_dim: 6
+  window_size: 5
+  hidden_dim: 16
+  beta_temp: 0.5
+  lr: 3.0e-4
+
+agss_ppo:
+  action_dim: 4
+  actor_hidden: [32, 16]
+  critic_hidden: [32, 16]
+  init_log_std: -0.5
+  gamma: 0.99
+  gae_lambda: 0.95
+  clip_eps: 0.2
+  value_coef: 0.5
+  entropy_coef: 0.01
+  lr: 3.0e-4
+  rollout_steps: 64
+  ppo_epochs: 2
+  minibatch_size: 16
+  max_grad_norm: 0.5
+  reward_w_progress: 1.0
+  reward_w_smooth: 0.05
+  reward_w_alive: 0.01
+  d0: 0.6
+  alpha: 1.2
+  max_forward_speed: 2.5
+  max_yaw_rate_deg: 120.0
+  max_roll_pitch_deg: 30.0
+
+env:
+  name: mock
+  area_size_m: 50.0
+  episode_max_steps: 30
+  image_size: [640, 480]
+  scenarios:
+    A:
+      tree_spacing_mean: 5.5
+      tree_spacing_std: 2.0
+      row_spacing_mean: 8.0
+      row_spacing_std: 2.0
+      alias_severity: low
+    B:
+      tree_spacing_mean: 5.5
+      tree_spacing_std: 1.0
+      row_spacing_mean: 8.0
+      row_spacing_std: 1.0
+      alias_severity: medium
+    C:
+      tree_spacing_mean: 5.5
+      tree_spacing_std: 0.3
+      row_spacing_mean: 8.0
+      row_spacing_std: 0.3
+      alias_severity: high
+  weather_conditions: [clear_day, cloudy_day, clear_afternoon, cloudy_afternoon]
+
+training:
+  perception_epochs: 1
+  perception_batch_size: 4
+  perception_rollout_episodes: 3
+  ppo_total_episodes: 2
+  log_every: 1
+  checkpoint_dir: checkpoints_smoke
+  log_dir: logs_smoke
+
+finetune_real:
+  sacr_lr: 1.0e-5
+  camr_lr: 1.0e-5
+  epochs: 1
+  batch_size: 4

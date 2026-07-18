@@ -1,0 +1,61 @@
+<?xml version="1.0"?>
+<sdf version="1.9">
+  <model name="oil_palm">
+    <static>true</static>
+    <link name="link">
+      <visual name="visual">
+        <!--
+          Uses the GLB (binary glTF), NOT the OBJ: gz-sim's Ogre2 renderer
+          rejects the OBJ's plain MTL materials ("Fixed Function pipeline
+          is no longer allowed") so the OBJ loads but renders invisible.
+          The GLB carries proper PBR materials + embedded-relative texture
+          URIs (sawit/.../BaseColor.png) that Ogre2 renders correctly --
+          confirmed by an actual offscreen camera render (green fronds,
+          brown trunk, red fruit clusters). The GLB was produced with:
+              assimp export kelapa_sawit.obj kelapa_sawit_tex.glb
+          from the fixed OBJ (whose MTL already had corrected relative
+          texture paths), so the glTF texture URIs resolve on any OS --
+          re-run that if you ever regenerate it. See progress.md /
+          ros_gazebo_bridge/README.md for the full diagnosis.
+
+          Post-conversion, the leaf material ("Empty", the palm-frond
+          texture) was patched with pygltflib: alphaMode=MASK
+          (alphaCutoff 0.5) + doubleSided, and its texture PNG was
+          re-saved from palette to explicit RGBA. Without this the frond
+          quads render as opaque white rectangles instead of cut-out
+          leaf shapes (the texture's transparency is otherwise ignored).
+          Redo that patch too if regenerating from the OBJ.
+
+          Orientation: the mesh is Y-up (Blender/glTF convention), Gazebo
+          is Z-up, so roll +pi/2 stands it upright. Scale: the mesh's
+          bounding box is ~450 units tall; 0.01331 scales that to
+          world_gen.py's TRUNK_HEIGHT (6.0m). Confirmed visually via the
+          offscreen render (the interactive Gazebo GUI can't render here
+          -- no GPU passthrough; see README's Limitations). If a tree
+          looks wrong-sized/oriented on another host, tune these two.
+        -->
+        <pose>0 0 0 1.5707963 0 0</pose>
+        <geometry>
+          <mesh>
+            <uri>model://oil_palm/meshes/kelapa_sawit_tex.glb</uri>
+            <scale>0.01331 0.01331 0.01331</scale>
+          </mesh>
+        </geometry>
+      </visual>
+      <collision name="collision">
+        <!-- Simplified physics collision (cylinder), independent of the
+             detailed visual mesh -- matches world_gen.py's
+             TRUNK_RADIUS/TRUNK_HEIGHT so collision behavior is unchanged
+             from the original bare-cylinder trunks. -->
+        <pose>0 0 3.0 0 0 0</pose>
+        <geometry>
+          <cylinder><radius>0.25</radius><length>6.0</length></cylinder>
+        </geometry>
+        <surface>
+          <contact><ode><min_depth>0.001</min_depth><max_vel>0</max_vel></ode></contact>
+          <friction><ode/></friction>
+        </surface>
+      </collision>
+    </link>
+  </model>
+</sdf>

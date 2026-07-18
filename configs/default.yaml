@@ -1,0 +1,179 @@
+# STAR-Nav default configuration.
+# Every value here is referenced by name in the paper's equations; see the
+# docstring at the top of each module in star_nav/ for the exact mapping.
+
+seed: 42
+device: cuda   # falls back to cpu automatically if CUDA is unavailable
+
+# ------------------------------------------------------------------
+# SACR: Structure-Aware Corridor Representation (Section 3.2)
+# ------------------------------------------------------------------
+sacr:
+  in_channels: 3
+  feature_channels: 128        # C: channels of z_t produced by f_enc
+  num_seg_classes: 5           # {sky/canopy, trunk, ground, worker, other}
+  geom_dim: 4                  # k: theta_corr = [phi, d_L, d_R, d_F]
+  geom_hidden: [512, 256]      # 2-layer MLP head f_geom
+  struct_dim: 128              # d_s: dimensionality of z_struct
+  depth_pool_regions: 3        # d_d: [d_L_bar, d_C_bar, d_R_bar]
+  lambda_geom: 1.0             # weight of L_geom in L_SACR
+  lambda_depth: 1.0            # weight of L_depth (metric depth regression; feeds AGSS's d_L/d_R)
+  mu_smooth: 0.1               # weight of L_smooth inside L_geom
+  lr: 3.0e-4
+  # Novelty: aleatoric depth uncertainty. Adds a per-region log-variance head
+  # to z_struct_aug ([d_s + 2*d_d]) trained with a heteroscedastic NLL, so AGSS
+  # can widen the margin where lateral clearance is uncertain.
+  depth_uncertainty: true
+  lambda_unc: 0.5              # weight of heteroscedastic NLL in L_SACR
+
+# ------------------------------------------------------------------
+# CAMR: Consistency-Aware Memory Representation (Section 3.3)
+# ------------------------------------------------------------------
+camr:
+  pose_dim: 7                  # VIO pose: position (3) + quaternion (4)
+  imu_dim: 6                   # tri-axis accelerometer + gyroscope
+  window_size: 10              # T: causal sliding-window length
+  hidden_dim: 128              # d_h: forward/backward LSTM hidden size
+  beta_temp: 0.5               # weight of L_temp in L_CAMR
+  lr: 3.0e-4
+  # Novelty: anticipatory occupancy head. Predicts future [left,right] actor
+  # occupancy from the belief; feeds the adaptive shield so the policy reacts
+  # to where a moving worker WILL be.
+  predict_occupancy: true
+  occ_dim: 2                   # [left, right]
+  lambda_occ: 0.5              # weight of BCE L_occ in L_CAMR
+
+# ------------------------------------------------------------------
+# AGSS-PPO: policy, critic, and safety shield (Section 3.4)
+# ------------------------------------------------------------------
+agss_ppo:
+  action_dim: 4                # (v_x, v_y, v_z, omega)
+  actor_hidden: [256, 128]
+  critic_hidden: [256, 128]
+  init_log_std: -0.5
+  gamma: 0.99
+  gae_lambda: 0.95
+  clip_eps: 0.2
+  value_coef: 0.5
+  entropy_coef: 0.01
+  lr: 3.0e-4
+  rollout_steps: 2048
+  ppo_epochs: 10
+  minibatch_size: 256
+  max_grad_norm: 0.5
+  # Reward weights: r_t = w1*r_progress + w2*r_smooth + w3*r_alive
+  reward_w_progress: 1.0
+  reward_w_smooth: 0.05
+  reward_w_alive: 0.01
+  # AGSS adaptive safety margin: d_safe = d0 + alpha*c_t [+ beta*sigma + gamma*occ]
+  d0: 0.6                       # base clearance (m)
+  alpha: 1.2                    # adaptive scaling factor
+  # NOTE: named beta_unc/gamma_occ, NOT beta/gamma -- agss_ppo.gamma is already
+  # the PPO discount factor (0.99). A `gamma` key here would silently overwrite
+  # it and break long-horizon credit assignment.
+  beta_unc: 0.5                 # weight on SACR per-side depth uncertainty (sigma)
+  gamma_occ: 0.8                # weight on CAMR predicted future actor occupancy
+  target_kl: 0.03               # anti-collapse: early-stop PPO epochs if approx KL exceeds this
+  max_forward_speed: 2.5        # m/s
+  max_yaw_rate_deg: 120.0       # deg/s
+  max_roll_pitch_deg: 30.0      # deg
+
+# ------------------------------------------------------------------
+# Environment / simulation (Section 4)
+# ------------------------------------------------------------------
+env:
+  name: mock                   # "mock" (bundled, dependency-free), "airsim", or "gazebo_ros"
+  area_size_m: 50.0
+  episode_max_steps: 500
+  image_size: [640, 480]
+  # Only read when env.name == "gazebo_ros" -- see ros_gazebo_bridge/README.md.
+  # World layout/scenario is fixed at world-generation time (world_gen.py),
+  # not re-randomized per episode; these topic names must match whatever
+  # ros_gazebo_bridge/launch/corridor_sim.launch.py was launched with.
+  ros:
+    node_name: star_nav_bridge
+    # Camera topics must match the gz camera-sensor <topic> exactly (the
+    # bridge maps gz topic -> same-named ROS topic). fpv5/pavo_femto and
+    # PX4's stock OakD publish /camera and /depth_camera -- NOT
+    # /camera/image (an earlier default that silently yielded no data).
+    rgb_topic: /camera
+    depth_topic: /depth_camera
+    # Real semantic segmentation from the fpv5/pavo_femto segmentation
+    # camera (gz <sensor type="segmentation">), bridged like rgb/depth. The
+    # gz sensor <topic> is `semantic_segmentation`, so the class-id label
+    # map is published on `.../labels_map`. Per-object class ids come from
+    # the gz-sim Label plugins world_gen.py bakes into each model. Set to
+    # null to fall back to the all-CLASS_UNKNOWN placeholder (e.g. if you
+    # launch PX4's stock x500_depth, which has no segmentation camera). See
+    # the Limitations section in ros_gazebo_bridge/README.md.
+    seg_topic: /semantic_segmentation/labels_map
+    # IMU/pose defaults point at this ros-humble-mavros build's actual
+    # (doubled-namespace) publishing topics, not the documented plain
+    # paths -- see the NOTE in ros_bridge_node.py's docstring. Override if
+    # your mavros build doesn't have this quirk.
+    imu_topic: /mavros/mavros/data
+    pose_topic: /mavros/mavros/pose
+    # Control service/topic names. On this MAVROS build the setpoint input and
+    # arming service live under a doubled /mavros/mavros/ namespace, NOT the
+    # documented plain paths. setpoint_topic is /mavros/mavros/local
+    # (mavros_msgs/PositionTarget) -- the documented /mavros/setpoint_raw/local
+    # has ZERO subscribers here, so publishing there silently drops every
+    # setpoint and the vehicle never moves (this was exactly why step()'s
+    # actions produced no motion). arm_service is /mavros/mavros/arming (NOT
+    # the documented /mavros/cmd/arming); set_mode is /mavros/set_mode (not
+    # doubled). All verified via `ros2 node info /mavros/mavros`.
+    setpoint_topic: /mavros/mavros/local
+    arm_service: /mavros/mavros/arming
+    mode_service: /mavros/set_mode
+    # Ground-truth odometry topic -- vehicle-name-dependent. Set to match
+    # whichever model you launch (e.g. /model/fpv5_0/odometry). The gz
+    # OdometryPublisher plugin in each model's SDF is what publishes this.
+    gt_odom_topic: /model/fpv5_0/odometry
+    world_layout_json: ros_gazebo_bridge/worlds/scenario_a.world.json
+  scenarios:
+    A:
+      tree_spacing_mean: 5.5
+      tree_spacing_std: 2.0
+      row_spacing_mean: 8.0
+      row_spacing_std: 2.0
+      alias_severity: low
+    B:
+      tree_spacing_mean: 5.5
+      tree_spacing_std: 1.0
+      row_spacing_mean: 8.0
+      row_spacing_std: 1.0
+      alias_severity: medium
+    C:
+      tree_spacing_mean: 5.5
+      tree_spacing_std: 0.3
+      row_spacing_mean: 8.0
+      row_spacing_std: 0.3
+      alias_severity: high
+  weather_conditions: [clear_day, cloudy_day, clear_afternoon, cloudy_afternoon]
+
+# ------------------------------------------------------------------
+# Training orchestration
+# ------------------------------------------------------------------
+training:
+  perception_epochs: 50
+  perception_batch_size: 32
+  perception_rollout_episodes: 200   # episodes used to build the offline
+                                      # perception dataset (Phase 1)
+  ppo_total_episodes: 10000
+  log_every: 10
+  # Checkpoints are split by domain: checkpoints/gazebo (real-Gazebo perception,
+  # trained by scripts/train_sacr.py + train_camr.py) and checkpoints/mock
+  # (Mock-env novelty perception + AGSS-PPO policy, trained by scripts/train_ppo.py).
+  # checkpoint_dir below is only used by the legacy run_train_all/run_eval_all
+  # one-shot pipeline, which trains on the Mock env.
+  checkpoint_dir: checkpoints/mock
+  log_dir: logs
+
+# ------------------------------------------------------------------
+# Real-world fine-tuning (Section 3.5 / Algorithm tab:method-4)
+# ------------------------------------------------------------------
+finetune_real:
+  sacr_lr: 1.0e-5
+  camr_lr: 1.0e-5
+  epochs: 20
+  batch_size: 16

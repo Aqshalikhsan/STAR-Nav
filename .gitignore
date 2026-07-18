@@ -1,0 +1,42 @@
+__pycache__/
+*.pyc
+
+# training artifacts
+# checkpoints/ is tracked (model weights kept in the repo, per request);
+# smoke-test + logs stay ignored.
+checkpoints_smoke/
+logs/
+logs_smoke/
+results*.csv
+
+# captured perception datasets (large, regenerable via
+# ros_gazebo_bridge/perception_capture/ -- exceed GitHub's 100MB limit).
+# Sample PNGs under data/samples/ are kept (small, visual reference).
+data/*.npz
+data/**/*.npz
+
+# recorded FPV frame buffers (hundreds of MB, regenerable -- exceed GitHub's
+# 100MB limit). Small trajectory/actor .npy files here stay tracked.
+renders/deploy/flight_fpv.npy
+
+# local env
+.venv/
+*.egg-info/
+
+# ros_gazebo_bridge: colcon build output and generated Gazebo worlds
+ros_gazebo_bridge/build/
+ros_gazebo_bridge/install/
+ros_gazebo_bridge/log/
+ros_gazebo_bridge/worlds/
+
+# Raw downloaded datasets (Roboflow exports etc) -- large, re-downloadable
+dataset/
+
+# Unreal map project (map-unreal/): keep the source Content/Config/assets so
+# reviewers can open the env_sawit map in UE 4.27, but drop the regenerable
+# engine caches (Intermediate/Saved/Binaries/DerivedDataCache/Build).
+map-unreal/Intermediate/
+map-unreal/Saved/
+map-unreal/Binaries/
+map-unreal/Build/
+map-unreal/DerivedDataCache/

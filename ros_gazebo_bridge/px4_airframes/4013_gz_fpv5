@@ -1,0 +1,140 @@
+#!/bin/sh
+#
+# @name Gazebo FPV5
+#
+# @type Quadrotor
+#
+# Representative 5-inch FPV freestyle quad (225mm true-X wheelbase,
+# 2207-class motors, 5.1in 3-blade props, DJI O4 Pro front camera),
+# synthesized from Oscar Liang's 5-inch buying guide -- a second vehicle
+# variant alongside the real-hardware "pavo_femto" airframe
+# (4012_gz_pavo_femto), added to evaluate STAR-Nav against a more
+# conventional open-frame racing/freestyle quad. See
+# ros_gazebo_bridge/ros_gazebo_bridge/fpv5_gen.py for the model geometry
+# this mirrors and the full list of component/assumption choices.
+#
+# CA_ROTOR*_PX/PY below match fpv5_gen.py's ARM_OFFSET_M
+# (wheelbase/(2*sqrt(2)) ~= 0.07955m) and rotor_N link positions exactly.
+# CA_ROTOR*_KM signs follow rotor_N's turningDirection (ccw -> positive,
+# cw -> negative), same convention as gz_x500 and gz_pavo_femto.
+#
+# MPC_THR_HOVER is a rough estimate, not tuned against actual flight
+# behavior -- this vehicle's thrust-to-weight ratio (~9.5 at 300g dry
+# weight per fpv5_gen.py) is far higher and more aggressive than either
+# gz_x500 or gz_pavo_femto, so expect very different (much twitchier)
+# handling and a real need to retune rate-controller gains before
+# trusting flight behavior in sim.
+
+. ${R}etc/init.d/rc.mc_defaults
+
+PX4_SIMULATOR=${PX4_SIMULATOR:=gz}
+PX4_GZ_WORLD=${PX4_GZ_WORLD:=default}
+PX4_SIM_MODEL=${PX4_SIM_MODEL:=fpv5}
+
+param set-default SIM_GZ_EN 1
+
+param set-default SENS_EN_GPSSIM 1
+param set-default SENS_EN_BAROSIM 0
+param set-default SENS_EN_MAGSIM 1
+
+param set-default CA_AIRFRAME 0
+param set-default CA_ROTOR_COUNT 4
+
+# NOTE: CA_ROTOR*_PY signs are the NEGATIVE of the model's rotor_N link y
+# coordinate. The gz model frame is FLU (x-forward, y-LEFT), PX4's control
+# allocation is FRD (x-forward, y-RIGHT), so the y axis flips between them.
+# fpv5_gen.py writes the rotor link poses in the gz (FLU) frame; each
+# CA_ROTOR*_PY here must be -(rotor_N gz-y) or the roll axis is inverted and
+# the vehicle flips itself over the instant it leaves the ground (mixer
+# rolls the wrong way -> positive feedback -> tumble -> disarm). PX (pitch,
+# x-forward) is the same in both frames and is NOT negated. KM sign still
+# follows spin (ccw -> +, cw -> -), matching each rotor's turningDirection.
+#   rotor_0 gz(+x,-y) ccw -> front-right  -> PX+ PY+ KM+
+#   rotor_1 gz(-x,+y) ccw -> rear-left    -> PX- PY- KM+
+#   rotor_2 gz(+x,+y) cw  -> front-left   -> PX+ PY- KM-
+#   rotor_3 gz(-x,-y) cw  -> rear-right   -> PX- PY+ KM-
+param set-default CA_ROTOR0_PX 0.07955
+param set-default CA_ROTOR0_PY 0.07955
+param set-default CA_ROTOR0_KM  0.025
+
+param set-default CA_ROTOR1_PX -0.07955
+param set-default CA_ROTOR1_PY -0.07955
+param set-default CA_ROTOR1_KM  0.025
+
+param set-default CA_ROTOR2_PX 0.07955
+param set-default CA_ROTOR2_PY -0.07955
+param set-default CA_ROTOR2_KM -0.025
+
+param set-default CA_ROTOR3_PX -0.07955
+param set-default CA_ROTOR3_PY 0.07955
+param set-default CA_ROTOR3_KM -0.025
+
+param set-default SIM_GZ_EC_FUNC1 101
+param set-default SIM_GZ_EC_FUNC2 102
+param set-default SIM_GZ_EC_FUNC3 103
+param set-default SIM_GZ_EC_FUNC4 104
+
+param set-default SIM_GZ_EC_MIN1 150
+param set-default SIM_GZ_EC_MIN2 150
+param set-default SIM_GZ_EC_MIN3 150
+param set-default SIM_GZ_EC_MIN4 150
+
+# SIM_GZ_EC_MAX* MUST match the motor model's <maxRotVelocity> (3300 rad/s in
+# fpv5_gen.py), NOT the x500 default of 1000. This is the ESC max the gz
+# control-allocation bridge scales full throttle to: leaving it at 1000 while
+# the rotor can physically spin to 3300 caps every motor at ~1000 rad/s, so
+# max total thrust is only 4*(motorConstant*1000^2) ~= 2.6 N against a ~2.9 N
+# weight -- effective T/W < 1, the vehicle CANNOT take off even at full
+# throttle (motors just idle ~500-1000 rad/s and it never leaves the ground).
+# With 3300 here, full throttle reaches the designed ~9.5 T/W and hover sits
+# at ~1069 rad/s == 0.32 of range (hence MPC_THR_HOVER below).
+param set-default SIM_GZ_EC_MAX1 3300
+param set-default SIM_GZ_EC_MAX2 3300
+param set-default SIM_GZ_EC_MAX3 3300
+param set-default SIM_GZ_EC_MAX4 3300
+
+# Hover throttle. The sqrt(1/T_W) ~= 0.32 estimate was WRONG for the sim's
+# actual normalized-thrust -> rotor-speed mapping: PX4's hover-thrust estimator
+# (MPC_USE_HTE, valid in flight) measures the true hover thrust at ~0.225 and the
+# commanded vehicle_thrust_setpoint.z at steady hover is -0.225. Leaving 0.32 fed
+# ~42% too much thrust forward at hover, so the vehicle tended to climb and the
+# altitude loop hunted it back -> a slow ~0.2 Hz vertical BOB (looks like the
+# drone "vibrating" on the onboard camera). The correct value also kills the
+# takeoff/early transient before the HTE converges. Measured on the fpv5 gz model
+# 2026-07-10 (steady-hover altitude went 8.2 cm -> 1.0 cm pk-pk).
+param set-default MPC_THR_HOVER 0.225
+
+# Rate-controller + takeoff tuning for this small (225mm, ~300g) high-T/W
+# frame. The stock rc.mc_defaults gains are set for a much larger/slower
+# vehicle; on a 9.5-T/W 5" quad they over-drive the attitude loop, so at
+# full thrust authority the vehicle launches violently and tumbles/disarms
+# on takeoff. Lower the rate P/D (faster frame needs less gain), and cap the
+# thrust/climb so takeoff is gentle instead of explosive. These are sane
+# starting values, not bench-tuned -- expect to refine them for aggressive
+# flight, but they get it off the ground stably.
+param set-default MC_ROLLRATE_P 0.08
+param set-default MC_PITCHRATE_P 0.08
+param set-default MC_ROLLRATE_D 0.0015
+param set-default MC_PITCHRATE_D 0.0015
+param set-default MC_ROLLRATE_I 0.15
+param set-default MC_PITCHRATE_I 0.15
+param set-default MPC_THR_MAX 0.50
+param set-default MPC_TKO_SPEED 1.0
+param set-default MPC_Z_VEL_MAX_UP 2.0
+# Vertical-velocity D term: the default 0 leaves the altitude loop under-damped
+# on this snappy high-T/W frame (contributes to the bob). A small D damps the
+# vertical oscillation -- steady-hover altitude std dropped ~5x (1.0 -> 0.2 cm)
+# alongside the MPC_THR_HOVER fix above.
+param set-default MPC_Z_VEL_D_ACC 0.10
+
+# Height reference = external vision (3), not the SITL GPS altitude (1, the
+# default) which drifts/diverges badly here (z estimate seen climbing to
+# 70+ m during a ~2 m flight). PX4's GZBridge already feeds the model's
+# OdometryPublisher output into the EKF as vehicle_visual_odometry, and
+# EKF2_EV_CTRL defaults to 15 (EV horiz+vert pos + vel + yaw), so with a real
+# 3D odometry source (see the model's <dimensions>3</dimensions>) the EKF gets
+# a clean, drift-free altitude -- take-off, hover and up/down all track their
+# setpoints accurately. This is the sim's stand-in for the real drone's VIO
+# (a GPS-denied position source); GPS stays on here as extra horizontal aiding
+# but the paper's fully GPS-denied config would also set EKF2_GPS_CTRL 0.
+param set-default EKF2_HGT_REF 3

@@ -1,0 +1,33 @@
+<?xml version="1.0"?>
+<?xml-stylesheet type="text/xsl" href="http://download.ros.org/schema/package_format3.xsd"?>
+<package format="3">
+  <name>ros_gazebo_bridge</name>
+  <version>0.1.0</version>
+  <description>
+    Gazebo + PX4 (MAVLink) + ROS 2 backend implementing STAR-Nav's
+    BaseCorridorEnv contract -- a drop-in alternative to AirSimCorridorEnv
+    (../star_nav/envs/airsim_env.py) built entirely from open-source
+    tooling: PX4 SITL, Gazebo (gz sim), MAVROS, ros_gz_bridge, ROS 2.
+  </description>
+  <maintainer email="aksalikhsan@gmail.com">Aqshal Nur Ikhsan</maintainer>
+  <license>TODO</license>
+
+  <exec_depend>rclpy</exec_depend>
+  <exec_depend>mavros_msgs</exec_depend>
+  <exec_depend>sensor_msgs</exec_depend>
+  <exec_depend>nav_msgs</exec_depend>
+  <exec_depend>geometry_msgs</exec_depend>
+  <exec_depend>cv_bridge</exec_depend>
+  <exec_depend>ros_gz_bridge</exec_depend>
+  <exec_depend>ros_gz_sim</exec_depend>
+  <exec_depend>ros_gz_interfaces</exec_depend>
+
+  <test_depend>ament_copyright</test_depend>
+  <test_depend>ament_flake8</test_depend>
+  <test_depend>ament_pep257</test_depend>
+  <test_depend>python3-pytest</test_depend>
+
+  <export>
+    <build_type>ament_python</build_type>
+  </export>
+</package>

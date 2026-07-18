@@ -1,0 +1,107 @@
+# PX4 SITL + Gazebo (gz sim), speaking MAVLink over UDP.
+# Builds a specific PX4-Autopilot ref, its bundled gz-sim vehicle models
+# (x500/x500_depth), two custom vehicle models added for STAR-Nav --
+# pavo_femto (the real deployment hardware, a 75mm ducted whoop) and
+# fpv5 (a representative 225mm 5" freestyle quad), see
+# ../ros_gazebo_bridge/pavo_femto_gen.py and fpv5_gen.py -- and the
+# oil_palm tree model (textured mesh, user-provided) that world_gen.py
+# spawns by default in place of a bare cylinder.
+#
+# Built context is the repo root (see ../docker-compose.yml / the direct
+# `docker build -f ros_gazebo_bridge/docker/Dockerfile.px4_gazebo .`
+# invocation used to test this) -- COPY paths below are relative to that,
+# not to this file's own directory.
+#
+# Built and run live in this environment (WSL2 Ubuntu + Docker Engine) --
+# see ../README.md's Status section and progress.md for the validation
+# history and the real PX4/Docker bugs found and fixed along the way.
+FROM ubuntu:22.04
+
+ARG PX4_REF=v1.15.0
+ENV DEBIAN_FRONTEND=noninteractive
+
+RUN apt-get update && apt-get install -y --no-install-recommends \
+        git python3 python3-pip wget ca-certificates sudo lsb-release \
+    && rm -rf /var/lib/apt/lists/*
+
+RUN git clone --branch ${PX4_REF} --depth 1 \
+        https://github.com/PX4/PX4-Autopilot.git /opt/PX4-Autopilot
+WORKDIR /opt/PX4-Autopilot
+# Fetch submodules in parallel with a stalled-connection abort+retry loop --
+# a single submodule clone (out of ~15) hanging on a slow/stalled TCP
+# connection should not block the whole build indefinitely.
+RUN git config http.lowSpeedLimit 1000 && git config http.lowSpeedTime 20 \
+    && for i in 1 2 3 4 5; do \
+         git submodule update --init --recursive --depth 1 --jobs 4 && break; \
+         echo "submodule update attempt $i failed, retrying in 5s..."; sleep 5; \
+       done
+
+# PX4's own dependency installer sets up Gazebo, the gz-sim vehicle
+# models, and the SITL build toolchain in one step. --no-nuttx skips the
+# arm-none-eabi-gcc download (NuttX cross-compiler for real flight
+# controller firmware) -- irrelevant for the posix/SITL target this image
+# builds, and observed to fail/retry repeatedly against a slow/flaky
+# armkeil.blob.core.windows.net connection.
+RUN /opt/PX4-Autopilot/Tools/setup/ubuntu.sh --no-nuttx
+
+# NuttX (platforms/nuttx/NuttX/*) is only needed to cross-compile firmware
+# for real flight controllers, never for the posix/SITL target this image
+# builds -- and its shallow (--depth 1) clone has no tags, which crashes
+# PX4's own src/lib/version/px_update_git_header.py (it does `git tag
+# --sort=v:refname` in that submodule and indexes the last match with no
+# empty-list guard). Deinit it so that script's
+# `os.path.exists('platforms/nuttx/NuttX/nuttx/.git')` check is False and
+# it skips the NuttX version block entirely instead of crashing.
+RUN git submodule deinit -f platforms/nuttx/NuttX/nuttx platforms/nuttx/NuttX/apps
+
+# Custom vehicle models (pavo_femto, fpv5) and their PX4 airframe config,
+# copied in BEFORE the build step below: PX4's own CMakeLists.txt
+# (src/modules/simulation/gz_bridge/CMakeLists.txt) generates one
+# `gz_<model>` build/run target per airframe file matching
+# ROMFS/px4fmu_common/init.d-posix/airframes/*_gz_* via a `file(GLOB ...)`
+# at CMake configure time -- if these airframe files aren't present yet
+# when `make px4_sitl_default` first configures, the gz_pavo_femto/gz_fpv5
+# targets simply won't exist (found the hard way: retrofitting them into
+# an already-configured build required manually re-running `cmake .` to
+# force a re-glob -- avoid needing that here by copying them in first).
+COPY ros_gazebo_bridge/px4_models/pavo_femto Tools/simulation/gz/models/pavo_femto
+COPY ros_gazebo_bridge/px4_models/fpv5 Tools/simulation/gz/models/fpv5
+COPY ros_gazebo_bridge/px4_airframes/4012_gz_pavo_femto ROMFS/px4fmu_common/init.d-posix/airframes/4012_gz_pavo_femto
+COPY ros_gazebo_bridge/px4_airframes/4013_gz_fpv5 ROMFS/px4fmu_common/init.d-posix/airframes/4013_gz_fpv5
+
+# Register the two custom airframes in the ROMFS airframe list. Copying the
+# files into the airframes/ dir (above) is NOT enough on its own: PX4 only
+# INSTALLS airframes explicitly enumerated in this `px4_add_romfs_files(...)`
+# list into the built rootfs (ROMFS/CMakeLists.txt FATAL_ERRORs on any listed
+# file that doesn't exist, and silently ignores any existing file that isn't
+# listed). Without this, `PX4_SIM_MODEL=fpv5` boots but finds no matching
+# airframe and falls back to x500_depth (SYS_AUTOSTART 4002) -- which is
+# exactly why selecting the custom vehicles appeared to have "no effect".
+# Insert right after 4011_gz_lawnmower, idempotently.
+RUN sed -i '/^\s*4011_gz_lawnmower\s*$/a\	4012_gz_pavo_femto\n	4013_gz_fpv5' \
+        ROMFS/px4fmu_common/init.d-posix/airframes/CMakeLists.txt \
+    && grep -q '4013_gz_fpv5' ROMFS/px4fmu_common/init.d-posix/airframes/CMakeLists.txt
+
+# oil_palm: a textured tree model (trunk + fruit clusters, user-provided
+# mesh) that world_gen.py's to_sdf() spawns via <include> in place of a
+# bare cylinder by default (use_mesh_trunks=True) -- not an airframe/CMake
+# target concern like the two vehicle models above, just needs to be on
+# Gazebo's resource path (Tools/simulation/gz/models/) at runtime.
+COPY ros_gazebo_bridge/px4_models/oil_palm Tools/simulation/gz/models/oil_palm
+
+# Pre-build (compile only) the SITL target so `docker run` starts fast.
+# IMPORTANT: `make px4_sitl_default gz_x500_depth` (two targets) is PX4's
+# "build AND launch a running simulation" convenience form -- passing
+# `gz_x500_depth` as a second make target, not just an env var, actually
+# starts `gz sim` and `bin/px4` and keeps them running. Used here that
+# would hang the image build forever inside a live simulation session
+# with no display and no way to exit. Build only (`px4_sitl_default`
+# alone); the entrypoint script runs the real `make px4_sitl gz_<model>`
+# (build+run, model selected via $PX4_SIM_MODEL) at container start,
+# where a live session is actually wanted.
+# No `|| true` -- a failed build must fail the image build.
+RUN PX4_SIM_MODEL=gz_x500_depth make px4_sitl_default
+
+COPY ros_gazebo_bridge/docker/entrypoint_px4_gazebo.sh /entrypoint.sh
+RUN chmod +x /entrypoint.sh
+ENTRYPOINT ["/entrypoint.sh"]

@@ -1,0 +1,99 @@
+name: Gazebo sim (integration)
+
+# Heavy, opt-in integration test of the live Rung 3 stack: builds the PX4 SITL +
+# Gazebo and ROS 2 + MAVROS images, brings them up headless/CPU-only, and runs a
+# policy-free GazeboROSEnv reset()+step() smoke. NOT run on every push -- the
+# image build is long (~20-40 min, PX4 from source) and GPU-less rendering is
+# slow -- so it runs on manual dispatch and nightly only. The fast per-module CI
+# lives in ci.yml.
+on:
+  workflow_dispatch:
+  schedule:
+    - cron: "0 3 * * *"   # nightly 03:00 UTC
+
+concurrency:
+  group: gazebo-sim-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  gazebo-integration:
+    name: live PX4 + Gazebo env smoke (CPU, headless)
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    env:
+      COMPOSE: -f ros_gazebo_bridge/docker/docker-compose.ci.yml
+      PX4C: star_nav_px4_gazebo
+      ROSC: star_nav_ros_bridge
+      MODEL: fpv5
+      PX4_GZ_WORLD: /worlds/scenario_a.sdf
+      PX4_SIM_MODEL: fpv5
+      PX4_GZ_MODEL_POSE: "1,24,0.3,0,0,0"
+      HEADLESS: "1"
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Free up disk space
+        run: |
+          sudo rm -rf /usr/share/dotnet /opt/ghc /usr/local/lib/android /opt/hostedtoolcache/CodeQL
+          docker system prune -af || true
+          df -h
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Generate the corridor world
+        run: |
+          pip install numpy
+          cd ros_gazebo_bridge
+          python -m ros_gazebo_bridge.world_gen --scenario A --out worlds/scenario_a
+          ls -la worlds/
+
+      - name: Build + start the sim (px4-gazebo + ros-bridge)
+        run: docker compose $COMPOSE up -d --build px4-gazebo ros-bridge
+
+      - name: Wait for PX4 "Ready for takeoff"
+        run: |
+          for _ in $(seq 1 60); do
+            docker logs "$PX4C" 2>&1 | grep -q "Ready for takeoff" && { echo "PX4 ready"; exit 0; }
+            sleep 5
+          done
+          echo "PX4 never reached 'Ready for takeoff'"; docker logs "$PX4C" 2>&1 | tail -50; exit 1
+
+      - name: Wait for MAVROS connection
+        run: |
+          for _ in $(seq 1 30); do
+            docker exec "$ROSC" bash -lc 'source /opt/ros/humble/setup.bash; timeout 3 ros2 topic echo --once /mavros/state 2>/dev/null' \
+              | grep -q 'connected: true' && { echo "MAVROS connected"; exit 0; }
+            sleep 5
+          done
+          echo "MAVROS did not connect"; docker logs "$ROSC" 2>&1 | tail -50; exit 1
+
+      - name: Sync repo code into the ros-bridge container
+        run: |
+          docker exec "$ROSC" mkdir -p /workspace
+          docker cp star_nav "$ROSC:/workspace/"
+          docker cp scripts  "$ROSC:/workspace/"
+          docker cp configs  "$ROSC:/workspace/"
+
+      - name: Bridge ground-truth odometry
+        run: |
+          docker exec -d "$ROSC" bash -lc "source /opt/ros/humble/setup.bash; source /ros2_ws/install/setup.bash 2>/dev/null; \
+            exec ros2 run ros_gz_bridge parameter_bridge \
+              /model/${MODEL}_0/odometry@nav_msgs/msg/Odometry[gz.msgs.Odometry > /tmp/gt_odom.log 2>&1"
+          sleep 5
+
+      - name: Run the GazeboROSEnv smoke (reset + step)
+        run: |
+          docker exec "$ROSC" bash -lc "source /opt/ros/humble/setup.bash; source /ros2_ws/install/setup.bash 2>/dev/null; \
+            cd /workspace && python3 scripts/gazebo_env_smoke.py --scenario A --steps 5"
+
+      - name: Dump container logs
+        if: always()
+        run: |
+          echo "===== px4-gazebo ====="; docker logs "$PX4C" 2>&1 | tail -80 || true
+          echo "===== ros-bridge ====="; docker logs "$ROSC" 2>&1 | tail -80 || true
+
+      - name: Tear down
+        if: always()
+        run: docker compose $COMPOSE down -v || true

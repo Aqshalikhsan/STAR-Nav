@@ -1,0 +1,47 @@
+# Hardware bridge config -- keep this in sync with BOTH ppm_trainer.ino and your
+# EdgeTX/radio mixer, or the drone will move on the wrong axis.
+
+serial:
+  port: /dev/ttyUSB0      # Arduino serial device (Linux: ttyUSB0/ttyACM0; check `ls /dev/tty*`)
+  baud: 115200            # must equal BAUD in ppm_trainer.ino
+  stream_hz: 50           # packet rate; must be faster than the .ino FAILSAFE_MS (500 ms)
+
+# Channel ORDER = the index each control sits at in the PPM frame. This is the
+# default AETR + arm and MUST match `failsafe[]` in ppm_trainer.ino and the
+# channel order set in your radio (EdgeTX: Model > Mixer / channel order).
+channels:
+  roll:     0
+  pitch:    1
+  throttle: 2
+  yaw:      3
+  arm:      4
+  aux1:     5
+  aux2:     6
+  aux3:     7
+
+# Microsecond endpoints (standard RC). 1500 = centre, throttle low = 1000.
+endpoints:
+  us_min: 1000
+  us_mid: 1500
+  us_max: 2000
+
+# What the Arduino outputs when the laptop link drops (see FAILSAFE_MS). Throttle
+# MIN + arm LOW = motors stop / disarmed. Do not "improve" this to keep flying.
+failsafe:
+  roll: 1500
+  pitch: 1500
+  throttle: 1000
+  yaw: 1500
+  arm: 1000
+  aux1: 1500
+  aux2: 1500
+  aux3: 1500
+
+# PPM signal params -- these live in ppm_trainer.ino (#define), repeated here for
+# reference. If your radio ignores the signal, flip ON_STATE (polarity) in the .ino.
+ppm:
+  channel_number: 8
+  frame_length_us: 22500
+  pulse_length_us: 300
+  polarity: normal        # normal = idle-low positive pulses; some radios need "inverted"
+  sig_pin: 9              # Arduino pin -> 3.5mm TIP

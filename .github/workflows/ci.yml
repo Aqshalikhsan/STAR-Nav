@@ -1,0 +1,181 @@
+name: CI
+
+on:
+  push:
+    branches: [master]
+  pull_request:
+    branches: [master]
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  PY: "3.11"
+
+jobs:
+  # --- Stage 1: warm the dependency cache once, so the test/integration jobs
+  #     restore wheels instead of re-downloading them. ---
+  setup:
+    name: Install & Cache Dependencies
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ env.PY }}
+          cache: pip
+          cache-dependency-path: requirements.txt
+      - name: Install dependencies (CPU-only torch)
+        run: |
+          python -m pip install --upgrade pip
+          pip install torch --index-url https://download.pytorch.org/whl/cpu
+          pip install -r requirements.txt
+          pip install pytest
+
+  # --- Stage 1 (parallel): static checks that need no heavy deps. ---
+  lint:
+    name: Lint & Static Analysis
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ env.PY }}
+      - name: Byte-compile all source (syntax / static check)
+        run: python -m compileall -q star_nav scripts tests ros_gazebo_bridge/ros_gazebo_bridge hardware
+
+  validate-configs:
+    name: Validate YAML Configs
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ env.PY }}
+      - name: Parse every config + workflow YAML
+        run: |
+          pip install pyyaml
+          python - <<'PY'
+          import glob, yaml
+          files = glob.glob("configs/*.yaml") + glob.glob(".github/workflows/*.yml")
+          for f in files:
+              with open(f) as fh:
+                  yaml.safe_load(fh)
+              print("ok", f)
+          PY
+
+  # --- Stage 2: per-module unit tests, gated on setup + the static checks. ---
+  test-perception:
+    name: "Unit Tests: Perception (SACR + CAMR)"
+    needs: [setup, lint, validate-configs]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ env.PY }}
+          cache: pip
+          cache-dependency-path: requirements.txt
+      - name: Install dependencies (CPU-only torch)
+        run: |
+          pip install torch --index-url https://download.pytorch.org/whl/cpu
+          pip install -r requirements.txt pytest
+      - name: Perception shape/contract tests
+        run: pytest tests/test_shapes.py -v -k "sacr or camr or causal_window"
+
+  test-policy:
+    name: "Unit Tests: Policy (AGSS-PPO)"
+    needs: [setup, lint, validate-configs]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ env.PY }}
+          cache: pip
+          cache-dependency-path: requirements.txt
+      - name: Install dependencies (CPU-only torch)
+        run: |
+          pip install torch --index-url https://download.pytorch.org/whl/cpu
+          pip install -r requirements.txt pytest
+      - name: Policy shape/contract tests
+        run: pytest tests/test_shapes.py -v -k "actor_critic or agss"
+
+  test-env:
+    name: "Unit Tests: Env & World-gen"
+    needs: [setup, lint, validate-configs]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ env.PY }}
+          cache: pip
+          cache-dependency-path: requirements.txt
+      - name: Install dependencies (CPU-only torch)
+        run: |
+          pip install torch --index-url https://download.pytorch.org/whl/cpu
+          pip install -r requirements.txt pytest
+      - name: Mock env contract test
+        run: pytest tests/test_shapes.py -v -k "mock_env"
+      - name: Gazebo world-generator tests (ROS-independent)
+        working-directory: ros_gazebo_bridge
+        run: python -m pytest test/test_world_gen.py -v
+
+  # --- Stage 2 (parallel): real-world control bridge, no drone/serial hardware. ---
+  hardware-bridge:
+    name: Real-World Bridge Smoke
+    needs: [setup]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ env.PY }}
+      - name: Install bridge dependencies
+        run: pip install pyserial pyyaml numpy
+      - name: rc_link packet self-test (no hardware)
+        run: python hardware/laptop/rc_link.py --selftest
+      - name: Import the deploy entrypoints
+        working-directory: hardware/laptop
+        run: python -c "import rc_link, policy_to_channels, vision_deploy, keyboard_control; print('hardware entrypoints import OK')"
+
+  # --- Stage 3: end-to-end run of every module on the tiny smoke config. ---
+  integration:
+    name: Integration Tests (mock env)
+    needs: [test-perception, test-policy, test-env]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ env.PY }}
+          cache: pip
+          cache-dependency-path: requirements.txt
+      - name: Install dependencies (CPU-only torch)
+        run: |
+          pip install torch --index-url https://download.pytorch.org/whl/cpu
+          pip install -r requirements.txt
+      - name: Train all modules (SACR -> CAMR -> PPO + AGSS)
+        run: python scripts/run_train_all.py --config configs/smoke_test.yaml
+      - name: Evaluate the trained checkpoints
+        run: |
+          python scripts/run_eval_all.py --config configs/smoke_test.yaml \
+            --checkpoint-dir checkpoints_smoke --episodes-per-cell 1 --out smoke_results.csv
+
+  # --- Stage 4: single required status that gates on every job above. ---
+  summary:
+    name: CI Summary Gate
+    needs: [setup, lint, validate-configs, test-perception, test-policy, test-env, hardware-bridge, integration]
+    if: always()
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check that every job passed
+        run: |
+          echo "upstream results: ${{ join(needs.*.result, ', ') }}"
+          if ${{ contains(needs.*.result, 'failure') || contains(needs.*.result, 'cancelled') }}; then
+            echo "::error::a required job did not pass"
+            exit 1
+          fi
+          echo "all required jobs passed"

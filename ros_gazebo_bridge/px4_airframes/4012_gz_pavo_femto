@@ -1,0 +1,93 @@
+#!/bin/sh
+#
+# @name Gazebo Pavo Femto
+#
+# @type Quadrotor
+#
+# Real-world STAR-Nav hardware: a Pavo Femto brushless whoop (75mm
+# wheelbase, LAVA 1102 motors, Gemfan 1611 3-blade props, DJI O4 Lite
+# front camera), not PX4's stock 500mm-class x500. See
+# ros_gazebo_bridge/ros_gazebo_bridge/pavo_femto_gen.py for the model
+# geometry this mirrors and the full list of engineering-estimate
+# assumptions (motor thrust curve, inertia, camera tilt -- none of this
+# is measured bench data).
+#
+# CA_ROTOR*_PX/PY below match pavo_femto_gen.py's ARM_OFFSET_M
+# (wheelbase/(2*sqrt(2)) ~= 0.02652m) and rotor_N link positions exactly.
+# CA_ROTOR*_KM signs follow rotor_N's turningDirection (ccw -> positive,
+# cw -> negative), same convention PX4's own gz_x500 airframe uses for
+# its rotor_0..3 links.
+#
+# MPC_THR_HOVER is a first estimate from the model's thrust-to-weight
+# ratio (~2.17 at 84.4g flying weight per pavo_femto_gen.py), not tuned
+# against actual flight behavior -- expect to retune (along with the
+# default rate-controller gains, which were tuned for far larger/heavier
+# multirotors) after flying this in sim.
+
+. ${R}etc/init.d/rc.mc_defaults
+
+PX4_SIMULATOR=${PX4_SIMULATOR:=gz}
+PX4_GZ_WORLD=${PX4_GZ_WORLD:=default}
+PX4_SIM_MODEL=${PX4_SIM_MODEL:=pavo_femto}
+
+param set-default SIM_GZ_EN 1
+
+param set-default SENS_EN_GPSSIM 1
+param set-default SENS_EN_BAROSIM 0
+param set-default SENS_EN_MAGSIM 1
+
+param set-default CA_AIRFRAME 0
+param set-default CA_ROTOR_COUNT 4
+
+# CA_ROTOR*_PY signs are the NEGATIVE of the model's rotor_N link y (gz model
+# frame is FLU / y-left, PX4 control allocation is FRD / y-right, so y flips).
+# This is the same systematic sign error that grounded/flipped fpv5 until it
+# was corrected (see 4013_gz_fpv5's CA_ROTOR note) -- the same generator wrote
+# both airframes with CA_ROTOR_PY = +model_y instead of -model_y, inverting
+# the roll axis. Corrected here by analogy; NOT yet flight-verified on
+# pavo_femto (fpv5's identical fix was verified by a stable ~9 m corridor
+# flight). PX (pitch) is not negated; KM follows spin direction.
+param set-default CA_ROTOR0_PX 0.02652
+param set-default CA_ROTOR0_PY 0.02652
+param set-default CA_ROTOR0_KM  0.02
+
+param set-default CA_ROTOR1_PX -0.02652
+param set-default CA_ROTOR1_PY -0.02652
+param set-default CA_ROTOR1_KM  0.02
+
+param set-default CA_ROTOR2_PX 0.02652
+param set-default CA_ROTOR2_PY -0.02652
+param set-default CA_ROTOR2_KM -0.02
+
+param set-default CA_ROTOR3_PX -0.02652
+param set-default CA_ROTOR3_PY 0.02652
+param set-default CA_ROTOR3_KM -0.02
+
+param set-default SIM_GZ_EC_FUNC1 101
+param set-default SIM_GZ_EC_FUNC2 102
+param set-default SIM_GZ_EC_FUNC3 103
+param set-default SIM_GZ_EC_FUNC4 104
+
+param set-default SIM_GZ_EC_MIN1 150
+param set-default SIM_GZ_EC_MIN2 150
+param set-default SIM_GZ_EC_MIN3 150
+param set-default SIM_GZ_EC_MIN4 150
+
+# SIM_GZ_EC_MAX* MUST match the motor model's <maxRotVelocity> (12000 rad/s
+# for pavo_femto's tiny high-rpm whoop motors), NOT the x500 default of 1000.
+# Left at 1000 the gz bridge caps every motor at ~1000/12000 = 8% of its rated
+# speed, so max thrust is a tiny fraction of weight and the vehicle cannot
+# fly at all -- the same ceiling bug that grounded fpv5 (see 4013_gz_fpv5).
+# NOT yet flight-verified on pavo_femto.
+param set-default SIM_GZ_EC_MAX1 12000
+param set-default SIM_GZ_EC_MAX2 12000
+param set-default SIM_GZ_EC_MAX3 12000
+param set-default SIM_GZ_EC_MAX4 12000
+
+param set-default MPC_THR_HOVER 0.45
+
+# Height reference = external vision (see 4013_gz_fpv5 for the full rationale):
+# PX4's GZBridge feeds the model's 3D OdometryPublisher into the EKF as
+# vehicle_visual_odometry, giving a drift-free altitude instead of the
+# diverging SITL GPS height. Requires <dimensions>3</dimensions> in the model.
+param set-default EKF2_HGT_REF 3

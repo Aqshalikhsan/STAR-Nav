@@ -1,0 +1,47 @@
+# File produced by Open Asset Import Library (http://www.assimp.sf.net)
+# (assimp v5.2.0)
+#
+# Texture paths below were rewritten from the original FBX export's
+# absolute Windows paths (D:\BLENDER\picture\teksture\...) to paths
+# relative to this .mtl file's own directory, so they resolve inside
+# the Gazebo model package regardless of host OS.
+
+newmtl M-sawit
+Kd 0.432731509 0.0884947851 0.0617401004
+Ka 0 0 0
+Ks 0.432731509 0.0884947851 0.0617401004
+Ke 0 0 0
+Tf 0 0 0
+d 1
+Ns 25
+illum 2
+map_Kd sawit/batang/M-sawit_BaseColor.png
+map_Ns sawit/batang/M-sawit_Roughness.png
+bump sawit/batang/M-sawit_Normal.png
+map_bump sawit/batang/M-sawit_Normal.png
+
+newmtl Empty
+Kd 0.800000012 0.800000012 0.800000012
+Ka 0 0 0
+Ks 0.800000012 0.800000012 0.800000012
+Ke 0 0 0
+Tf 0 0 0
+d 1
+Ns 25
+illum 2
+map_Kd sawit/NicePng_palm-leaf-png_704831.png
+map_d sawit/NicePng_palm-leaf-png_704831.png
+
+newmtl kekapa sawir
+Kd 0.800000012 0.800000012 0.800000012
+Ka 0 0 0
+Ks 0.800000012 0.800000012 0.800000012
+Ke 0 0 0
+Tf 0 0 0
+d 1
+Ns 25
+illum 2
+map_Kd sawit/buah/kekapa sawir_BaseColor.png
+map_Ns sawit/buah/kekapa sawir_Roughness.png
+bump sawit/buah/kekapa sawir_Normal.png
+map_bump sawit/buah/kekapa sawir_Normal.png

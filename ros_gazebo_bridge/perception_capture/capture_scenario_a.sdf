@@ -1,0 +1,610 @@
+<?xml version="1.0"?>
+<sdf version="1.9">
+  <world name="scenario_a">
+    <physics name="1ms" type="ode">
+      <max_step_size>0.001</max_step_size>
+      <real_time_factor>1.0</real_time_factor>
+    </physics>
+    <plugin filename="gz-sim-physics-system" name="gz::sim::systems::Physics"/>
+    <plugin filename="gz-sim-scene-broadcaster-system" name="gz::sim::systems::SceneBroadcaster"/>
+    <plugin filename="gz-sim-contact-system" name="gz::sim::systems::Contact"/>
+    <plugin filename="gz-sim-user-commands-system" name="gz::sim::systems::UserCommands"/>
+    <!-- Without these, Gazebo never actually simulates or publishes any
+         sensor data -- the vehicle model's <sensor> tags (IMU, depth
+         camera, etc.) sit inert with no system to drive them. PX4 then
+         fails every preflight check (accel/gyro/baro/compass "missing"),
+         EKF2 never initializes, and MAVROS has nothing to relay to
+         /mavros/imu/data or /mavros/local_position/pose. Matches the set
+         PX4's own Tools/simulation/gz/worlds/default.sdf loads. -->
+    <plugin filename="gz-sim-imu-system" name="gz::sim::systems::Imu"/>
+    <plugin filename="gz-sim-air-pressure-system" name="gz::sim::systems::AirPressure"/>
+    <plugin filename="gz-sim-apply-link-wrench-system" name="gz::sim::systems::ApplyLinkWrench"/>
+    <plugin filename="gz-sim-navsat-system" name="gz::sim::systems::NavSat"/>
+    <plugin filename="gz-sim-sensors-system" name="gz::sim::systems::Sensors">
+      <render_engine>ogre2</render_engine>
+    </plugin>
+
+    <light type="directional" name="sun">
+      <cast_shadows>true</cast_shadows>
+      <pose>0 0 10 0 0 0</pose>
+      <diffuse>0.8 0.8 0.8 1</diffuse>
+      <specular>0.2 0.2 0.2 1</specular>
+      <direction>-0.3 0.3 -0.9</direction>
+    </light>
+
+    <model name="ground_plane">
+      <static>true</static>
+      <link name="link">
+        <collision name="collision">
+          <geometry><plane><normal>0 0 1</normal><size>100.0 100.0</size></plane></geometry>
+        </collision>
+        <visual name="visual">
+          <geometry><plane><normal>0 0 1</normal><size>100.0 100.0</size></plane></geometry>
+          <material><ambient>0.3 0.5 0.3 1</ambient><diffuse>0.3 0.5 0.3 1</diffuse></material>
+          <plugin filename="gz-sim-label-system" name="gz::sim::systems::Label">
+            <label>1</label>
+          </plugin>
+        </visual>
+      </link>
+    </model>
+
+    <include>
+      <uri>model://oil_palm</uri>
+      <name>trunk_0</name>
+      <pose>3.420 0.609 0 0 0 0</pose>
+      <plugin filename="gz-sim-label-system" name="gz::sim::systems::Label">
+        <label>2</label>
+      </plugin>
+    </include>
+    <include>
+      <uri>model://oil_palm</uri>
+      <name>trunk_1</name>
+      <pose>10.421 0.609 0 0 0 0</pose>
+      <plugin filename="gz-sim-label-system" name="gz::sim::systems::Label">
+        <label>2</label>
+      </plugin>
+    </include>
+    <include>
+      <uri>model://oil_palm</uri>
+      <name>trunk_2</name>
+      <pose>17.802 0.609 0 0 0 0</pose>
+      <plugin filename="gz-sim-label-system" name="gz::sim::systems::Label">
+        <label>2</label>
+      </plugin>
+    </include>
+    <include>
+      <uri>model://oil_palm</uri>
+      <name>trunk_3</name>
+      <pose>19.400 0.609 0 0 0 0</pose>
+      <plugin filename="gz-sim-label-system" name="gz::sim::systems::Label">
+        <label>2</label>
+      </plugin>
+    </include>
+    <include>
+      <uri>model://oil_palm</uri>
+      <name>trunk_4</name>
+      <pose>22.296 0.609 0 0 0 0</pose>
+      <plugin filename="gz-sim-label-system" name="gz::sim::systems::Label">
+        <label>2</label>
+      </plugin>
+    </include>
+    <include>
+      <uri>model://oil_palm</uri>
+      <name>trunk_5</name>
+      <pose>28.051 0.609 0 0 0 0</pose>
+      <plugin filename="gz-sim-label-system" name="gz::sim::systems::Label">
+        <label>2</label>
+      </plugin>
+    </include>
+    <include>
+      <uri>model://oil_palm</uri>
+      <name>trunk_6</name>
+      <pose>32.919 0.609 0 0 0 0</pose>
+      <plugin filename="gz-sim-label-system" name="gz::sim::systems::Label">
+        <label>2</label>
+      </plugin>
+    </include>
+    <include>
+      <uri>model://oil_palm</uri>
+      <name>trunk_7</name>
+      <pose>38.385 0.609 0 0 0 0</pose>
+      <plugin filename="gz-sim-label-system" name="gz::sim::systems::Label">
+        <label>2</label>
+      </plugin>
+    </include>
+    <include>
+      <uri>model://oil_palm</uri>
+      <name>trunk_8</name>
+      <pose>42.179 0.609 0 0 0 0</pose>
+      <plugin filename="gz-sim-label-system" name="gz::sim::systems::Label">
+        <label>2</label>
+      </plugin>
+    </include>
+    <include>
+      <uri>model://oil_palm</uri>
+      <name>trunk_9</name>
+      <pose>7.056 9.759 0 0 0 0</pose>
+      <plugin filename="gz-sim-label-system" name="gz::sim::systems::Label">
+        <label>2</label>
+      </plugin>
+    </include>
+    <include>
+      <uri>model://oil_palm</uri>
+      <name>trunk_10</name>
+      <pose>12.688 9.759 0 0 0 0</pose>
+      <plugin filename="gz-sim-label-system" name="gz::sim::systems::Label">
+        <label>2</label>
+      </plugin>
+    </include>
+    <include>
+      <uri>model://oil_palm</uri>
+      <name>trunk_11</name>
+      <pose>20.442 9.759 0 0 0 0</pose>
+      <plugin filename="gz-sim-label-system" name="gz::sim::systems::Label">
+        <label>2</label>
+      </plugin>
+    </include>
+    <include>
+      <uri>model://oil_palm</uri>
+      <name>trunk_12</name>
+      <pose>26.877 9.759 0 0 0 0</pose>
+      <plugin filename="gz-sim-label-system" name="gz::sim::systems::Label">
+        <label>2</label>
+      </plugin>
+    </include>
+    <include>
+      <uri>model://oil_palm</uri>
+      <name>trunk_13</name>
+      <pose>30.659 9.759 0 0 0 0</pose>
+      <plugin filename="gz-sim-label-system" name="gz::sim::systems::Label">
+        <label>2</label>
+      </plugin>
+    </include>
+    <include>
+      <uri>model://oil_palm</uri>
+      <name>trunk_14</name>
+      <pose>36.896 9.759 0 0 0 0</pose>
+      <plugin filename="gz-sim-label-system" name="gz::sim::systems::Label">
+        <label>2</label>
+      </plugin>
+    </include>
+    <include>
+      <uri>model://oil_palm</uri>
+      <name>trunk_15</name>
+      <pose>40.478 9.759 0 0 0 0</pose>
+      <plugin filename="gz-sim-label-system" name="gz::sim::systems::Label">
+        <label>2</label>
+      </plugin>
+    </include>
+    <include>
+      <uri>model://oil_palm</uri>
+      <name>trunk_16</name>
+      <pose>47.735 9.759 0 0 0 0</pose>
+      <plugin filename="gz-sim-label-system" name="gz::sim::systems::Label">
+        <label>2</label>
+      </plugin>
+    </include>
+    <include>
+      <uri>model://oil_palm</uri>
+      <name>trunk_17</name>
+      <pose>53.135 9.759 0 0 0 0</pose>
+      <plugin filename="gz-sim-label-system" name="gz::sim::systems::Label">
+        <label>2</label>
+      </plugin>
+    </include>
+    <include>
+      <uri>model://oil_palm</uri>
+      <name>trunk_18</name>
+      <pose>4.138 15.630 0 0 0 0</pose>
+      <plugin filename="gz-sim-label-system" name="gz::sim::systems::Label">
+        <label>2</label>
+      </plugin>
+    </include>
+    <include>
+      <uri>model://oil_palm</uri>
+      <name>trunk_19</name>
+      <pose>12.083 15.630 0 0 0 0</pose>
+      <plugin filename="gz-sim-label-system" name="gz::sim::systems::Label">
+        <label>2</label>
+      </plugin>
+    </include>
+    <include>
+      <uri>model://oil_palm</uri>
+      <name>trunk_20</name>
+      <pose>17.274 15.630 0 0 0 0</pose>
+      <plugin filename="gz-sim-label-system" name="gz::sim::systems::Label">
+        <label>2</label>
+      </plugin>
+    </include>
+    <include>
+      <uri>model://oil_palm</uri>
+      <name>trunk_21</name>
+      <pose>21.918 15.630 0 0 0 0</pose>
+      <plugin filename="gz-sim-label-system" name="gz::sim::systems::Label">
+        <label>2</label>
+      </plugin>
+    </include>
+    <include>
+      <uri>model://oil_palm</uri>
+      <name>trunk_22</name>
+      <pose>26.713 15.630 0 0 0 0</pose>
+      <plugin filename="gz-sim-label-system" name="gz::sim::systems::Label">
+        <label>2</label>
+      </plugin>
+    </include>
+    <include>
+      <uri>model://oil_palm</uri>
+      <name>trunk_23</name>
+      <pose>33.278 15.630 0 0 0 0</pose>
+      <plugin filename="gz-sim-label-system" name="gz::sim::systems::Label">
+        <label>2</label>
+      </plugin>
+    </include>
+    <include>
+      <uri>model://oil_palm</uri>
+      <name>trunk_24</name>
+      <pose>39.509 15.630 0 0 0 0</pose>
+      <plugin filename="gz-sim-label-system" name="gz::sim::systems::Label">
+        <label>2</label>
+      </plugin>
+    </include>
+    <include>
+      <uri>model://oil_palm</uri>
+      <name>trunk_25</name>
+      <pose>45.834 15.630 0 0 0 0</pose>
+      <plugin filename="gz-sim-label-system" name="gz::sim::systems::Label">
+        <label>2</label>
+      </plugin>
+    </include>
+    <include>
+      <uri>model://oil_palm</uri>
+      <name>trunk_26</name>
+      <pose>52.196 15.630 0 0 0 0</pose>
+      <plugin filename="gz-sim-label-system" name="gz::sim::systems::Label">
+        <label>2</label>
+      </plugin>
+    </include>
+    <include>
+      <uri>model://oil_palm</uri>
+      <name>trunk_27</name>
+      <pose>4.687 28.283 0 0 0 0</pose>
+      <plugin filename="gz-sim-label-system" name="gz::sim::systems::Label">
+        <label>2</label>
+      </plugin>
+    </include>
+    <include>
+      <uri>model://oil_palm</uri>
+      <name>trunk_28</name>
+      <pose>9.163 28.283 0 0 0 0</pose>
+      <plugin filename="gz-sim-label-system" name="gz::sim::systems::Label">
+        <label>2</label>
+      </plugin>
+    </include>
+    <include>
+      <uri>model://oil_palm</uri>
+      <name>trunk_29</name>
+      <pose>13.035 28.283 0 0 0 0</pose>
+      <plugin filename="gz-sim-label-system" name="gz::sim::systems::Label">
+        <label>2</label>
+      </plugin>
+    </include>
+    <include>
+      <uri>model://oil_palm</uri>
+      <name>trunk_30</name>
+      <pose>19.767 28.283 0 0 0 0</pose>
+      <plugin filename="gz-sim-label-system" name="gz::sim::systems::Label">
+        <label>2</label>
+      </plugin>
+    </include>
+    <include>
+      <uri>model://oil_palm</uri>
+      <name>trunk_31</name>
+      <pose>27.525 28.283 0 0 0 0</pose>
+      <plugin filename="gz-sim-label-system" name="gz::sim::systems::Label">
+        <label>2</label>
+      </plugin>
+    </include>
+    <include>
+      <uri>model://oil_palm</uri>
+      <name>trunk_32</name>
+      <pose>32.797 28.283 0 0 0 0</pose>
+      <plugin filename="gz-sim-label-system" name="gz::sim::systems::Label">
+        <label>2</label>
+      </plugin>
+    </include>
+    <include>
+      <uri>model://oil_palm</uri>
+      <name>trunk_33</name>
+      <pose>36.617 28.283 0 0 0 0</pose>
+      <plugin filename="gz-sim-label-system" name="gz::sim::systems::Label">
+        <label>2</label>
+      </plugin>
+    </include>
+    <include>
+      <uri>model://oil_palm</uri>
+      <name>trunk_34</name>
+      <pose>40.468 28.283 0 0 0 0</pose>
+      <plugin filename="gz-sim-label-system" name="gz::sim::systems::Label">
+        <label>2</label>
+      </plugin>
+    </include>
+    <include>
+      <uri>model://oil_palm</uri>
+      <name>trunk_35</name>
+      <pose>47.269 28.283 0 0 0 0</pose>
+      <plugin filename="gz-sim-label-system" name="gz::sim::systems::Label">
+        <label>2</label>
+      </plugin>
+    </include>
+    <include>
+      <uri>model://oil_palm</uri>
+      <name>trunk_36</name>
+      <pose>6.586 33.487 0 0 0 0</pose>
+      <plugin filename="gz-sim-label-system" name="gz::sim::systems::Label">
+        <label>2</label>
+      </plugin>
+    </include>
+    <include>
+      <uri>model://oil_palm</uri>
+      <name>trunk_37</name>
+      <pose>10.755 33.487 0 0 0 0</pose>
+      <plugin filename="gz-sim-label-system" name="gz::sim::systems::Label">
+        <label>2</label>
+      </plugin>
+    </include>
+    <include>
+      <uri>model://oil_palm</uri>
+      <name>trunk_38</name>
+      <pose>16.720 33.487 0 0 0 0</pose>
+      <plugin filename="gz-sim-label-system" name="gz::sim::systems::Label">
+        <label>2</label>
+      </plugin>
+    </include>
+    <include>
+      <uri>model://oil_palm</uri>
+      <name>trunk_39</name>
+      <pose>22.453 33.487 0 0 0 0</pose>
+      <plugin filename="gz-sim-label-system" name="gz::sim::systems::Label">
+        <label>2</label>
+      </plugin>
+    </include>
+    <include>
+      <uri>model://oil_palm</uri>
+      <name>trunk_40</name>
+      <pose>28.390 33.487 0 0 0 0</pose>
+      <plugin filename="gz-sim-label-system" name="gz::sim::systems::Label">
+        <label>2</label>
+      </plugin>
+    </include>
+    <include>
+      <uri>model://oil_palm</uri>
+      <name>trunk_41</name>
+      <pose>35.633 33.487 0 0 0 0</pose>
+      <plugin filename="gz-sim-label-system" name="gz::sim::systems::Label">
+        <label>2</label>
+      </plugin>
+    </include>
+    <include>
+      <uri>model://oil_palm</uri>
+      <name>trunk_42</name>
+      <pose>41.580 33.487 0 0 0 0</pose>
+      <plugin filename="gz-sim-label-system" name="gz::sim::systems::Label">
+        <label>2</label>
+      </plugin>
+    </include>
+    <include>
+      <uri>model://oil_palm</uri>
+      <name>trunk_43</name>
+      <pose>48.438 33.487 0 0 0 0</pose>
+      <plugin filename="gz-sim-label-system" name="gz::sim::systems::Label">
+        <label>2</label>
+      </plugin>
+    </include>
+    <include>
+      <uri>model://oil_palm</uri>
+      <name>trunk_44</name>
+      <pose>54.073 33.487 0 0 0 0</pose>
+      <plugin filename="gz-sim-label-system" name="gz::sim::systems::Label">
+        <label>2</label>
+      </plugin>
+    </include>
+    <include>
+      <uri>model://oil_palm</uri>
+      <name>trunk_45</name>
+      <pose>6.763 40.578 0 0 0 0</pose>
+      <plugin filename="gz-sim-label-system" name="gz::sim::systems::Label">
+        <label>2</label>
+      </plugin>
+    </include>
+    <include>
+      <uri>model://oil_palm</uri>
+      <name>trunk_46</name>
+      <pose>9.348 40.578 0 0 0 0</pose>
+      <plugin filename="gz-sim-label-system" name="gz::sim::systems::Label">
+        <label>2</label>
+      </plugin>
+    </include>
+    <include>
+      <uri>model://oil_palm</uri>
+      <name>trunk_47</name>
+      <pose>14.209 40.578 0 0 0 0</pose>
+      <plugin filename="gz-sim-label-system" name="gz::sim::systems::Label">
+        <label>2</label>
+      </plugin>
+    </include>
+    <include>
+      <uri>model://oil_palm</uri>
+      <name>trunk_48</name>
+      <pose>18.768 40.578 0 0 0 0</pose>
+      <plugin filename="gz-sim-label-system" name="gz::sim::systems::Label">
+        <label>2</label>
+      </plugin>
+    </include>
+    <include>
+      <uri>model://oil_palm</uri>
+      <name>trunk_49</name>
+      <pose>22.990 40.578 0 0 0 0</pose>
+      <plugin filename="gz-sim-label-system" name="gz::sim::systems::Label">
+        <label>2</label>
+      </plugin>
+    </include>
+    <include>
+      <uri>model://oil_palm</uri>
+      <name>trunk_50</name>
+      <pose>27.940 40.578 0 0 0 0</pose>
+      <plugin filename="gz-sim-label-system" name="gz::sim::systems::Label">
+        <label>2</label>
+      </plugin>
+    </include>
+    <include>
+      <uri>model://oil_palm</uri>
+      <name>trunk_51</name>
+      <pose>36.430 40.578 0 0 0 0</pose>
+      <plugin filename="gz-sim-label-system" name="gz::sim::systems::Label">
+        <label>2</label>
+      </plugin>
+    </include>
+    <include>
+      <uri>model://oil_palm</uri>
+      <name>trunk_52</name>
+      <pose>40.198 40.578 0 0 0 0</pose>
+      <plugin filename="gz-sim-label-system" name="gz::sim::systems::Label">
+        <label>2</label>
+      </plugin>
+    </include>
+    <include>
+      <uri>model://oil_palm</uri>
+      <name>trunk_53</name>
+      <pose>47.635 40.578 0 0 0 0</pose>
+      <plugin filename="gz-sim-label-system" name="gz::sim::systems::Label">
+        <label>2</label>
+      </plugin>
+    </include>
+  
+    <model name="capture_rig">
+      <pose>2.0 24.0 2.2 0 0 0</pose>
+      <!-- VelocityControl: drives the model at a commanded twist published on
+           /model/capture_rig/cmd_vel (gz.msgs.Twist). Physics-driven motion, so the
+           camera render follows (unlike the set_pose service). -->
+      <plugin filename="gz-sim-velocity-control-system" name="gz::sim::systems::VelocityControl">
+        <topic>/model/capture_rig/cmd_vel</topic>
+      </plugin>
+      <!-- OdometryPublisher: rig ground-truth pose (dimensions=3 for real z). -->
+      <plugin filename="gz-sim-odometry-publisher-system" name="gz::sim::systems::OdometryPublisher">
+        <dimensions>3</dimensions>
+        <odom_topic>/model/capture_rig/odometry</odom_topic>
+      </plugin>
+      <link name="link">
+        <gravity>false</gravity>
+        <inertial>
+          <mass>0.05</mass>
+          <inertia><ixx>1e-3</ixx><ixy>0</ixy><ixz>0</ixz><iyy>1e-3</iyy><iyz>0</iyz><izz>1e-3</izz></inertia>
+        </inertial>
+        <sensor name="rig_camera" type="camera">
+          <camera>
+            <horizontal_fov>1.5708</horizontal_fov>
+            <image><width>640</width><height>480</height></image>
+            <clip><near>0.05</near><far>100</far></clip>
+          </camera>
+          <always_on>1</always_on>
+          <update_rate>30</update_rate>
+          <topic>rig_camera</topic>
+        </sensor>
+        <sensor name="rig_depth" type="depth_camera">
+          <camera>
+            <horizontal_fov>1.5708</horizontal_fov>
+            <image><width>640</width><height>480</height><format>R_FLOAT32</format></image>
+            <clip><near>0.1</near><far>20.0</far></clip>
+          </camera>
+          <always_on>1</always_on>
+          <update_rate>30</update_rate>
+          <topic>rig_depth</topic>
+        </sensor>
+        <sensor name="rig_seg" type="segmentation">
+          <topic>rig_seg</topic>
+          <camera>
+            <segmentation_type>semantic</segmentation_type>
+            <horizontal_fov>1.5708</horizontal_fov>
+            <image><width>640</width><height>480</height></image>
+            <clip><near>0.05</near><far>100</far></clip>
+          </camera>
+          <always_on>1</always_on>
+          <update_rate>30</update_rate>
+        </sensor>
+      </link>
+    </model>
+
+    <include>
+      <uri>model://person_worker</uri>
+      <name>worker0</name>
+      <pose>10.0 20.5 0 0 0 1.5708</pose>
+      <plugin filename="gz-sim-velocity-control-system" name="gz::sim::systems::VelocityControl">
+        <topic>/model/worker0/cmd_vel</topic>
+      </plugin>
+      <plugin filename="gz-sim-odometry-publisher-system" name="gz::sim::systems::OdometryPublisher">
+        <dimensions>3</dimensions>
+        <odom_topic>/model/worker0/odometry</odom_topic>
+      </plugin>
+    </include>
+    <include>
+      <uri>model://person_worker</uri>
+      <name>worker1</name>
+      <pose>16.0 26.5 0 0 0 -1.5708</pose>
+      <plugin filename="gz-sim-velocity-control-system" name="gz::sim::systems::VelocityControl">
+        <topic>/model/worker1/cmd_vel</topic>
+      </plugin>
+      <plugin filename="gz-sim-odometry-publisher-system" name="gz::sim::systems::OdometryPublisher">
+        <dimensions>3</dimensions>
+        <odom_topic>/model/worker1/odometry</odom_topic>
+      </plugin>
+    </include>
+    <include>
+      <uri>model://person_worker</uri>
+      <name>worker2</name>
+      <pose>22.0 22.5 0 0 0 0.0</pose>
+      <plugin filename="gz-sim-velocity-control-system" name="gz::sim::systems::VelocityControl">
+        <topic>/model/worker2/cmd_vel</topic>
+      </plugin>
+      <plugin filename="gz-sim-odometry-publisher-system" name="gz::sim::systems::OdometryPublisher">
+        <dimensions>3</dimensions>
+        <odom_topic>/model/worker2/odometry</odom_topic>
+      </plugin>
+    </include>
+    <include>
+      <uri>model://person_worker</uri>
+      <name>worker3</name>
+      <pose>28.0 27.5 0 0 0 3.1416</pose>
+      <plugin filename="gz-sim-velocity-control-system" name="gz::sim::systems::VelocityControl">
+        <topic>/model/worker3/cmd_vel</topic>
+      </plugin>
+      <plugin filename="gz-sim-odometry-publisher-system" name="gz::sim::systems::OdometryPublisher">
+        <dimensions>3</dimensions>
+        <odom_topic>/model/worker3/odometry</odom_topic>
+      </plugin>
+    </include>
+    <include>
+      <uri>model://person_worker</uri>
+      <name>worker4</name>
+      <pose>34.0 21.5 0 0 0 0.7854</pose>
+      <plugin filename="gz-sim-velocity-control-system" name="gz::sim::systems::VelocityControl">
+        <topic>/model/worker4/cmd_vel</topic>
+      </plugin>
+      <plugin filename="gz-sim-odometry-publisher-system" name="gz::sim::systems::OdometryPublisher">
+        <dimensions>3</dimensions>
+        <odom_topic>/model/worker4/odometry</odom_topic>
+      </plugin>
+    </include>
+    <include>
+      <uri>model://person_worker</uri>
+      <name>worker5</name>
+      <pose>40.0 25.5 0 0 0 -0.7854</pose>
+      <plugin filename="gz-sim-velocity-control-system" name="gz::sim::systems::VelocityControl">
+        <topic>/model/worker5/cmd_vel</topic>
+      </plugin>
+      <plugin filename="gz-sim-odometry-publisher-system" name="gz::sim::systems::OdometryPublisher">
+        <dimensions>3</dimensions>
+        <odom_topic>/model/worker5/odometry</odom_topic>
+      </plugin>
+    </include>
+  </world>
+</sdf>

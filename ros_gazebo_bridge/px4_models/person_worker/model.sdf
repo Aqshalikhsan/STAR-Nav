@@ -1,0 +1,40 @@
+<?xml version="1.0" ?>
+<sdf version="1.9">
+  <model name="person_worker">
+    <!-- Human "worker" (moving dynamic object) for CAMR data. Plain <model>
+         (not a Fuel <actor>) so the gz-sim Label plugin tags it in the
+         segmentation camera as CLASS_ACTOR (=4), exactly like the trunks are
+         tagged CLASS_TRUNK. Mesh + textures: OpenRobotics "Standing person"
+         (Gazebo Fuel), stored locally under meshes/ + materials/textures/.
+         Gravity is off on the link so a VelocityControl cmd_vel (added at
+         world-build time) glides it across the corridor at a fixed height
+         with the render following (physics motion updates the render;
+         set_pose does not -- see ros_gazebo_bridge/perception_capture/). -->
+    <link name="link">
+      <gravity>false</gravity>
+      <inertial>
+        <pose>0 -0.1 0.95 0 0 0</pose>
+        <mass>80.0</mass>
+        <inertia>
+          <ixx>24.88</ixx><ixy>0</ixy><ixz>0</ixz>
+          <iyy>25.73</iyy><iyz>0</iyz><izz>2.48</izz>
+        </inertia>
+      </inertial>
+      <collision name="person">
+        <pose>0 0 0.02 0.04 0 0</pose>
+        <geometry>
+          <mesh><uri>meshes/standing.dae</uri></mesh>
+        </geometry>
+      </collision>
+      <visual name="visual">
+        <pose>0 0 0.02 0.04 0 0</pose>
+        <geometry>
+          <mesh><uri>meshes/standing.dae</uri></mesh>
+        </geometry>
+        <plugin filename="gz-sim-label-system" name="gz::sim::systems::Label">
+          <label>4</label>
+        </plugin>
+      </visual>
+    </link>
+  </model>
+</sdf>

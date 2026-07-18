@@ -1,0 +1,90 @@
+# ROS 2 Humble + MAVROS + ros_gz_bridge + this repo's Python stack.
+# Runs MAVROS/ros_gz_bridge (launch/corridor_sim.launch.py) and/or the
+# STAR-Nav training/eval scripts, talking to PX4 SITL+Gazebo running in
+# the sibling container built from Dockerfile.px4_gazebo.
+#
+# Built and live-validated against a Dockerfile.px4_gazebo container in
+# this environment, end to end: MAVROS connects to PX4 over MAVLink AND
+# ros_gz_bridge delivers Gazebo camera/depth/odometry into ROS 2, so
+# ROSGazeboBridge receives all required sensor topics. Several real bugs
+# were found getting the bridge side working -- see progress.md's
+# "GazeboROSEnv loop" section. The three most load-bearing here:
+#   * ros_gz_bridge MUST match PX4's Gazebo transport version. PX4 v1.15
+#     ships Gazebo Garden (gz-transport12); the default `ros-humble-ros-gz`
+#     package is built against Fortress (ignition-transport11), a DIFFERENT
+#     major version that CANNOT discover Garden topics at all -- the bridge
+#     silently forwarded zero messages. Fixed by installing the Garden
+#     variant `ros-humble-ros-gzgarden-bridge` instead.
+#   * cv_bridge (compiled against NumPy 1.x) segfaults on image conversion
+#     under NumPy 2.x -- pinned numpy<2 below.
+FROM ros:humble-ros-base
+
+ENV DEBIAN_FRONTEND=noninteractive
+
+# The OSRF Gazebo apt repo is needed for the Garden (gz-transport12)
+# ros_gz packages -- they aren't in the default ROS repos.
+RUN apt-get update && apt-get install -y --no-install-recommends \
+        curl gnupg lsb-release \
+    && curl -sSL https://packages.osrfoundation.org/gazebo.gpg \
+         -o /usr/share/keyrings/pkgs-osrf-archive-keyring.gpg \
+    && echo "deb [arch=amd64 signed-by=/usr/share/keyrings/pkgs-osrf-archive-keyring.gpg] http://packages.osrfoundation.org/gazebo/ubuntu-stable $(lsb_release -cs) main" \
+         > /etc/apt/sources.list.d/gazebo-stable.list \
+    && rm -rf /var/lib/apt/lists/*
+
+RUN apt-get update && apt-get install -y --no-install-recommends \
+        python3-pip python3-colcon-common-extensions \
+        ros-humble-mavros ros-humble-mavros-extras \
+        ros-humble-ros-gzgarden-bridge ros-humble-cv-bridge \
+        ros-humble-rmw-cyclonedds-cpp \
+        ros-humble-rqt-image-view \
+        geographiclib-tools \
+    && GEOLIB_SCRIPT="$(find /opt/ros/humble -iname 'install_geographiclib_datasets.sh' | head -1)" \
+    && if [ -n "$GEOLIB_SCRIPT" ]; then bash "$GEOLIB_SCRIPT"; \
+       else echo "install_geographiclib_datasets.sh not found under /opt/ros/humble -- GPS coordinate transforms in MAVROS may be degraded"; fi \
+    && rm -rf /var/lib/apt/lists/*
+
+# The default rmw_fastrtps_cpp crashes mavros_node on this build: every
+# plugin after the first few dies with "invalid allocator" trying to
+# create its own mavros/<topic> subscription (see git history/comments in
+# launch/corridor_sim.launch.py for the specific error) -- a known rough
+# edge for MAVROS+FastDDS combinations. Cyclone DDS is the commonly
+# recommended alternative for PX4/MAVROS setups and avoids it here.
+ENV RMW_IMPLEMENTATION=rmw_cyclonedds_cpp
+
+WORKDIR /workspace
+COPY requirements.txt /workspace/requirements.txt
+# CPU-only torch: this container bridges ROS2/MAVROS (and can optionally run
+# star_nav training/eval), but no GPU passthrough is configured for it --
+# the default PyPI torch wheel pulls the full CUDA toolkit (~3-4GB of
+# nvidia-* packages) for no benefit here.
+RUN pip3 install --no-cache-dir torch --index-url https://download.pytorch.org/whl/cpu
+RUN pip3 install --no-cache-dir -r /workspace/requirements.txt
+# cv_bridge in ros-humble is compiled against NumPy 1.x; NumPy 2.x makes
+# its image-conversion C extension segfault (`_ARRAY_API not found` at
+# import, then a core dump on the first imgmsg_to_cv2). Pin numpy<2 last
+# so nothing above pulls 2.x back in.
+RUN pip3 install --no-cache-dir "numpy<2"
+
+COPY star_nav /workspace/star_nav
+COPY configs /workspace/configs
+COPY scripts /workspace/scripts
+
+RUN mkdir -p /ros2_ws/src
+COPY ros_gazebo_bridge /ros2_ws/src/ros_gazebo_bridge
+RUN /bin/bash -c "source /opt/ros/humble/setup.bash && \
+    cd /ros2_ws && colcon build --packages-select ros_gazebo_bridge"
+
+# Kept as a separate layer (after the pip/torch installs above) so a slow or
+# blocked network hitting THIS apt-get doesn't force re-downloading torch's
+# ~200MB wheel from scratch on every rebuild -- only this small layer needs
+# to redo network I/O when new rqt tools are added here.
+RUN apt-get update && apt-get install -y --no-install-recommends \
+        ros-humble-rqt-console ros-humble-rqt-plot \
+        ros-humble-rqt-topic ros-humble-rqt-graph \
+        ros-humble-rqt-service-caller \
+    && rm -rf /var/lib/apt/lists/*
+
+COPY ros_gazebo_bridge/docker/entrypoint_ros_bridge.sh /entrypoint.sh
+RUN chmod +x /entrypoint.sh
+ENTRYPOINT ["/entrypoint.sh"]
+CMD ["bridge"]

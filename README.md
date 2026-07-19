@@ -8,6 +8,12 @@ looks like the last and satellite positioning is unreliable under the canopy.
 Paper: *"Spatio-Temporal Adaptive Reinforcement Learning for Autonomous
 Monocular UAV Navigation in GPS-Denied Repetitive Environment."*
 
+> **Why Gazebo + Docker?** Running Rung 2 needs a full Unreal Engine 4.27
+> install to open the map, which is heavy to set up. To make the flight stack
+> easy for a reviewer to try, this repository provides a Dockerized Gazebo + PX4
+> backend as a lightweight, open-source alternative: it comes up with a single
+> `docker compose up`, no Unreal install required, so anyone can run the full
+> flight stack.
 ## Why the problem is hard
 
 A plantation corridor defeats the usual navigation stack in two ways at once:
@@ -174,13 +180,6 @@ drone arms, takes off, holds altitude from simulated visual odometry
   <img src="renders/deploy/gazebo_flight.gif" width="820" alt="PX4 + Gazebo corridor flight (zigzag)"><br>
   <em>PX4 + Gazebo flight (zigzag corridor): onboard camera (left), top-down trajectory over the trunk field (right), altitude profile clearing the crowd (bottom).</em>
 </p>
-
-> **Why Gazebo + Docker?** Running Rung 2 needs a full Unreal Engine 4.27
-> install to open the map, which is heavy to set up. To make the flight stack
-> easy for a reviewer to try, this repository provides a Dockerized Gazebo + PX4
-> backend as a lightweight, open-source alternative: it comes up with a single
-> `docker compose up`, no Unreal install required, so anyone can run the full
-> flight stack.
 
 Full setup, the Docker images, and the ROS/PX4 backend details are in
 [`ros_gazebo_bridge/README.md`](ros_gazebo_bridge/README.md).

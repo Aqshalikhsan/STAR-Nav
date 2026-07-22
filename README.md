@@ -8,6 +8,8 @@ looks like the last and satellite positioning is unreliable under the canopy.
 Paper: *"Spatio-Temporal Adaptive Reinforcement Learning for Autonomous
 Monocular UAV Navigation in GPS-Denied Repetitive Environment."*
 
+Result data: [`data/results/`](data/results/) (the numbers reported in the paper).
+
 > **Why Gazebo + Docker?** Running Rung 2 needs a full Unreal Engine 4.27
 > install to open the map, which is heavy to set up. To make the flight stack
 > easy for a reviewer to try, this repository provides a Dockerized Gazebo + PX4
@@ -359,6 +361,29 @@ python laptop/vision_deploy.py --source rtsp://<pi-ip>:8554/cam \
 
 **Safety:** keep props off through the bench stages, and always fly with a hand
 on the radio's trainer-switch override.
+
+### 6. Generate the paper's result set
+
+Reproduce the paper's tables and figures in their exact parameter and metric
+schema by running the pipeline on the runnable backend. Every value is measured
+from a real rollout or perception pass, never synthesized. See
+[`star_nav/results/README.md`](star_nav/results/README.md) for the full
+10-category breakdown. The paper's reported result data is in
+[`data/results/`](data/results/).
+
+```bash
+# STAR-Nav categories (uses your trained checkpoints/):
+python scripts/generate_results.py --config configs/default.yaml \
+    --checkpoint-dir checkpoints --out results_out \
+    --categories 02,03,04,06,07,08,09 --episodes 20
+
+# Train a baseline (PPO / ViT-PPO / Mem-DRL / NavRL / TD3), then use it in the
+# comparison categories:
+python scripts/train_baseline.py --method TD3 --seed 1 --iterations 5000 \
+    --ckpt-out ckpts/TD3_seed1.pt --curve-out results_out
+python scripts/generate_results.py --method TD3 --baseline-ckpt ckpts/TD3_seed1.pt \
+    --categories 05,07,08,09 --out results_out
+```
 
 ## Repository layout
 

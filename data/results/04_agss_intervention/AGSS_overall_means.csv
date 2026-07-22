@@ -1,0 +1,4 @@
+Scenario,Seed,MeanComplexity,SDComplexity,MeanIntervention,SDIntervention,MeanCorrection,SDCorrection,TriggerRate_percent
+A,4.0,0.21329,0.011378,7.860552,1.632921,0.069352,0.004861,0.0
+B,4.0,0.373133,0.008118,14.103519,1.921143,0.113371,0.004671,0.0
+C,4.0,0.5602,0.012096,22.626648,1.210693,0.167795,0.004468,1.9

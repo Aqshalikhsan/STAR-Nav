@@ -65,11 +65,19 @@ class SACR(nn.Module):
         depth_pool_regions: int = 3,
         depth_backend: str = "lightweight",
         depth_uncertainty: bool = False,
+        # --- SACR ablation toggles (paper Section 5.2, variants S1-S7). Defaults
+        #     reproduce the full model (S7), so existing callers are unchanged. ---
+        use_geometry: bool = True,          # geometry head f_geom (S2+)
+        attention_mode: str = "geometry",   # "none" (S1/S2/S5) | "random" (S3) | "geometry" (S4/S6/S7)
+        use_depth: bool = True,             # region-aware depth pooling (S5+)
     ):
         super().__init__()
         self.feature_channels = feature_channels
         self.depth_pool_regions = depth_pool_regions
         self.depth_uncertainty = depth_uncertainty
+        self.use_geometry = use_geometry
+        self.attention_mode = attention_mode
+        self.use_depth = use_depth
 
         self.f_enc = ENetEncoder(in_channels, feature_channels)
         self.seg_head = SegmentationHead(feature_channels, num_seg_classes)
@@ -77,6 +85,8 @@ class SACR(nn.Module):
 
         # Channel-wise attention gate: alpha = sigmoid(W_alpha theta_corr + b_alpha)
         self.attn_proj = nn.Linear(geom_dim, feature_channels)
+        # Random (non-geometry) attention gate for the S3 ablation.
+        self.attn_rand = nn.Linear(feature_channels, feature_channels)
 
         # Project GAP(alpha * z_t) -> z_struct (d_s). Kept as identity-sized
         # linear so struct_dim is configurable independently of feature_channels.
@@ -97,7 +107,8 @@ class SACR(nn.Module):
                 nn.Linear(feature_channels, depth_pool_regions),
             )
 
-        self.z_struct_aug_dim = struct_dim + depth_pool_regions * (2 if depth_uncertainty else 1)
+        depth_terms = depth_pool_regions * (2 if depth_uncertainty else 1) if use_depth else 0
+        self.z_struct_aug_dim = struct_dim + depth_terms
 
     def forward(self, image: torch.Tensor, need_seg: bool = False) -> SACROutput:
         """image: (B, 3, H, W) in [0, 1]."""
@@ -105,21 +116,28 @@ class SACR(nn.Module):
 
         z_t = self.f_enc(image)                                   # (B, C, h', w')
         g_t = F.adaptive_avg_pool2d(z_t, 1).flatten(1)             # GAP(z_t) -> (B, C)
-        theta_corr = self.geom_head(g_t)                           # (B, k)
+        theta_corr = self.geom_head(g_t) if self.use_geometry else None
 
-        alpha = torch.sigmoid(self.attn_proj(theta_corr))          # (B, C)
-        z_gated = z_t * alpha.unsqueeze(-1).unsqueeze(-1)           # channel-wise modulation
-        pooled = F.adaptive_avg_pool2d(z_gated, 1).flatten(1)       # GAP(alpha (*) z_t)
+        if self.attention_mode == "geometry" and theta_corr is not None:
+            alpha = torch.sigmoid(self.attn_proj(theta_corr))      # geometry-conditioned gate
+        elif self.attention_mode == "random":
+            alpha = torch.sigmoid(self.attn_rand(g_t))             # random (non-geometry) gate
+        else:
+            alpha = torch.ones_like(g_t)                          # "none": no gating
+        z_gated = z_t * alpha.unsqueeze(-1).unsqueeze(-1)          # channel-wise modulation
+        pooled = F.adaptive_avg_pool2d(z_gated, 1).flatten(1)      # GAP(alpha (*) z_t)
         z_struct = self.struct_proj(pooled)                        # (B, d_s)
 
-        depth = self.depth_net(image)                               # (B, 1, H, W)
-        pooled_depth = region_aware_pool(depth, self.depth_pool_regions)  # (B, d_d)
-
+        depth = self.depth_net(image) if self.use_depth else None
         depth_logvar = None
-        if self.depth_uncertainty:
-            depth_logvar = self.depth_logvar_head(g_t)              # (B, d_d)
-            z_struct_aug = torch.cat([z_struct, pooled_depth, depth_logvar], dim=1)  # (B, d_s + 2*d_d)
+        if not self.use_depth:
+            z_struct_aug = z_struct                                # S1-S4: structure only
+        elif self.depth_uncertainty:
+            pooled_depth = region_aware_pool(depth, self.depth_pool_regions)
+            depth_logvar = self.depth_logvar_head(g_t)             # (B, d_d)
+            z_struct_aug = torch.cat([z_struct, pooled_depth, depth_logvar], dim=1)
         else:
+            pooled_depth = region_aware_pool(depth, self.depth_pool_regions)
             z_struct_aug = torch.cat([z_struct, pooled_depth], dim=1)   # (B, d_s + d_d)
 
         seg_logits = self.seg_head(z_t, (h, w)) if need_seg else None

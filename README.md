@@ -8,8 +8,6 @@ looks like the last and satellite positioning is unreliable under the canopy.
 Paper: *"Spatio-Temporal Adaptive Reinforcement Learning for Autonomous
 Monocular UAV Navigation in GPS-Denied Repetitive Environment."*
 
-Result data: [`data/results/`](data/results/) (the numbers reported in the paper).
-
 > **Why Gazebo + Docker?** Running Rung 2 needs a full Unreal Engine 4.27
 > install to open the map, which is heavy to set up. To make the flight stack
 > easy for a reviewer to try, this repository provides a Dockerized Gazebo + PX4
@@ -368,8 +366,7 @@ Reproduce the paper's tables and figures in their exact parameter and metric
 schema by running the pipeline on the runnable backend. Every value is measured
 from a real rollout or perception pass, never synthesized. See
 [`star_nav/results/README.md`](star_nav/results/README.md) for the full
-10-category breakdown. The paper's reported result data is in
-[`data/results/`](data/results/).
+10-category breakdown.
 
 ```bash
 # STAR-Nav categories (uses your trained checkpoints/):

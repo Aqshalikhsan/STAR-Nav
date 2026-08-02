@@ -2,8 +2,7 @@
 
 The comparison baselines (PPO, Mem-DRL, ViT-PPO, TD3, NavRL) reported in the
 paper were run using each method's **original author implementation**. The
-reported numbers in [`data/results/`](../../data/results/) come from those
-original runs.
+numbers reported in the paper come from those original runs.
 
 The code in this folder is a **simplified, contextually-equivalent
 reimplementation** of each method, provided so the comparison is runnable on the

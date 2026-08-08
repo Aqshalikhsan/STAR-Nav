@@ -18,6 +18,7 @@ from star_nav.models.camr import CAMR, CausalWindowBuffer
 from star_nav.models.sacr import SACR, sacr_loss
 from star_nav.models.camr import camr_loss
 from star_nav.utils.config import load_config
+from scripts.train_camr import episode_windows
 
 BATCH = 2
 IMG_H, IMG_W = 120, 160
@@ -50,6 +51,18 @@ def test_sacr_loss_runs_and_backprops():
     assert torch.isfinite(losses["L_SACR"])
 
 
+def test_sacr_temporal_smoothness_contributes_to_geometry_loss():
+    sacr = _make_sacr()
+    out = sacr(torch.rand(2, 3, IMG_H, IMG_W), need_seg=True)
+    seg = torch.zeros(2, IMG_H, IMG_W, dtype=torch.long)
+    theta = torch.zeros(2, 4)
+    base = sacr_loss(out, seg, theta, mu_smooth=0.1)
+    with_previous = sacr_loss(out, seg, theta,
+                              prev_theta_corr=out.theta_corr.detach() + 1.0,
+                              mu_smooth=0.1)
+    assert torch.allclose(with_previous["L_geom"] - base["L_geom"], torch.tensor(0.1))
+
+
 def test_camr_output_shape_and_causal_window():
     sacr = _make_sacr()
     d_s_aug = sacr.z_struct_aug_dim
@@ -79,6 +92,23 @@ def test_causal_window_buffer_left_pads_and_is_causal():
     x1 = torch.rand(1, 8)
     window2 = buf.push(x1)
     assert torch.allclose(window2[0, -1], x1[0])  # newest is always last
+
+
+def test_paper_camr_attention_and_stride():
+    camr = CAMR(z_struct_aug_dim=3, pose_dim=7, imu_dim=6,
+                window_size=8, hidden_dim=4, use_attention=True)
+    buf = CausalWindowBuffer(8, camr.input_dim, torch.device("cpu"), stride=8)
+    for step in range(57):
+        window = buf.push(torch.full((1, camr.input_dim), float(step)))
+    assert torch.equal(window[0, :, 0], torch.arange(0, 57, 8).float())
+    out = camr(window)
+    assert out.h_t.shape == (1, 8)
+    assert out.attention_weights.shape == (1, 8)
+    assert torch.allclose(out.attention_weights.sum(dim=1), torch.ones(1))
+    sequence = np.arange(58, dtype=np.float32).reshape(-1, 1)
+    offline, next_target, _ = episode_windows(sequence, sequence, 8, stride=8)
+    assert np.array_equal(offline[0, :, 0], np.arange(0, 57, 8))
+    assert next_target[0, 0] == 57
 
 
 def test_actor_critic_and_agss_shield():

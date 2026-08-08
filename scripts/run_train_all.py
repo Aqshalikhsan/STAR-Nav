@@ -17,7 +17,7 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 import torch
 
 from star_nav.envs import MockCorridorEnv
-from star_nav.models.agss_ppo import ActorCritic, AGSSShield
+from star_nav.models.agss_ppo import ActorCritic, AGSSShield, ComplexityHead
 from star_nav.models.camr import CAMR
 from star_nav.models.sacr import SACR
 from star_nav.training.collect_data import collect_episodes
@@ -69,6 +69,7 @@ def main():
         geom_hidden=cfg.sacr.geom_hidden,
         struct_dim=cfg.sacr.struct_dim,
         depth_pool_regions=cfg.sacr.depth_pool_regions,
+        depth_uncertainty=getattr(cfg.sacr, "depth_uncertainty", False),
     ).to(device)
 
     camr = CAMR(
@@ -77,6 +78,9 @@ def main():
         imu_dim=cfg.camr.imu_dim,
         window_size=cfg.camr.window_size,
         hidden_dim=cfg.camr.hidden_dim,
+        use_attention=getattr(cfg.camr, "use_attention", False),
+        predict_occupancy=getattr(cfg.camr, "predict_occupancy", False),
+        occ_dim=getattr(cfg.camr, "occ_dim", 2),
     ).to(device)
 
     belief_dim = 2 * cfg.camr.hidden_dim
@@ -89,7 +93,10 @@ def main():
     ).to(device)
 
     agss = AGSSShield(d0=cfg.agss_ppo.d0, alpha=cfg.agss_ppo.alpha,
-                       complexity_dim=belief_dim, device=device)
+                       complexity_dim=belief_dim, device=device,
+                       tau=getattr(cfg.agss_ppo, "tau", 1.0),
+                       lateral_action_scale=getattr(cfg.agss_ppo, "lateral_action_scale", 1.0))
+    complexity_head = ComplexityHead(belief_dim, w_ref=getattr(cfg.agss_ppo, "w_ref", 8.0)).to(device)
 
     # ---------------- Phase 1: perception-first pretraining ----------------
     print("\n=== Phase 1a: collecting rollout data for SACR/CAMR pretraining ===")
@@ -112,12 +119,14 @@ def main():
     # ---------------- Phase 2: PPO + AGSS ----------------
     print("\n=== Phase 2: PPO + AGSS policy optimization (perception frozen) ===")
     ppo_logger = CSVLogger(cfg.training.log_dir, "ppo")
-    actor_critic = train_ppo(env, sacr, camr, actor_critic, agss, cfg, device, ppo_logger)
+    actor_critic = train_ppo(env, sacr, camr, actor_critic, agss, cfg, device, ppo_logger,
+                             complexity_head=complexity_head)
 
     torch.save(actor_critic.state_dict(), os.path.join(cfg.training.checkpoint_dir, "actor_critic.pt"))
+    torch.save(complexity_head.state_dict(), os.path.join(cfg.training.checkpoint_dir, "complexity.pt"))
     print("\nDone. Checkpoints written to", cfg.training.checkpoint_dir)
-    print("For Phase 3 (real-world fine-tuning), see star_nav/training/finetune_real.py "
-          "and supply real flight-log episodes in the same Episode format.")
+    print("For Phase 3 (real-world adaptation of the segmentation decoder only), "
+          "see scripts/finetune_sacr_real.py.")
 
 
 if __name__ == "__main__":

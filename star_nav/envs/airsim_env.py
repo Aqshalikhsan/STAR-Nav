@@ -9,6 +9,13 @@ structural template, not a bundled asset -- it requires:
      RPC port.
   3. An AirSim `settings.json` configuring a multirotor with a monocular
      RGB camera (640x480 @ 30 FPS) and IMU, GPS disabled.
+  4. For ``env.pose_source: vins``, VINS-Mono running on the AirSim camera
+     and IMU streams (see ``star_nav.utils.vins``).
+
+Control runs at 30 Hz (33 ms steps). The normalized action is scaled by the
+per-axis limits (2.5, 2.5, 1.0 m/s, 120 deg/s). With
+``env.pose_relative_to_waypoint`` the CAMR pose is the position relative to
+the active waypoint (the goal in Scenarios A-C) plus the orientation.
 
 It implements the same `BaseCorridorEnv` contract as `MockCorridorEnv`,
 so `star_nav.training.train_ppo` does not need to know which backend is
@@ -38,9 +45,19 @@ class AirSimCorridorEnv(BaseCorridorEnv):
         self.client.enableApiControl(True)
         self.client.armDisarm(True)
 
-        self._max_forward_speed = cfg.get("max_forward_speed", 2.5) if hasattr(cfg, "get") else 2.5
-        self._max_yaw_rate = np.deg2rad(120.0)
-        self.dt = 0.2
+        self._max_forward_speed = getattr(cfg, "max_forward_speed", 2.5)
+        self._max_vertical_speed = getattr(cfg, "max_vertical_speed", self._max_forward_speed)
+        self._relative_pose = bool(getattr(cfg, "pose_relative_to_waypoint", False))
+        self._vins = None
+        if getattr(cfg, "pose_source", "airsim") == "vins":
+            from ..utils.vins import VinsOdometry
+            self._vins = VinsOdometry(getattr(cfg, "vins_topic", "/vins_estimator/odometry"))
+        self.reward_w_progress = getattr(cfg, "reward_w_progress", 1.0)
+        self.reward_w_smooth = getattr(cfg, "reward_w_smooth", 0.05)
+        self.reward_w_alive = getattr(cfg, "reward_w_alive", 1.0)
+        self.c_alive = getattr(cfg, "c_alive", 0.01)
+        self._max_yaw_rate = np.deg2rad(getattr(cfg, "max_yaw_rate_deg", 120.0))
+        self.dt = 1.0 / getattr(cfg, "control_hz", 30.0)
         self.max_steps = cfg.episode_max_steps
         self._t = 0
         self._prev_goal_dist = 0.0
@@ -72,7 +89,7 @@ class AirSimCorridorEnv(BaseCorridorEnv):
         v_x, v_y, v_z, omega_n = action
         v_x = float(v_x * self._max_forward_speed)
         v_y = float(v_y * self._max_forward_speed)
-        v_z = float(v_z * self._max_forward_speed)
+        v_z = float(v_z * self._max_vertical_speed)
         yaw_rate_deg = float(omega_n * np.rad2deg(self._max_yaw_rate))
 
         self.client.moveByVelocityBodyFrameAsync(
@@ -88,7 +105,9 @@ class AirSimCorridorEnv(BaseCorridorEnv):
         d_omega = omega - self._prev_omega
         d_v = np.array([v_x, v_y, v_z]) - self._prev_v
         r_smooth = -abs(d_omega) - float(np.linalg.norm(d_v))
-        reward = 1.0 * r_progress + 0.05 * r_smooth + 0.01 * 1.0
+        reward = (self.reward_w_progress * r_progress
+                  + self.reward_w_smooth * r_smooth
+                  + self.reward_w_alive * self.c_alive)
 
         self._prev_goal_dist = info.goal_distance
         self._prev_omega = omega
@@ -118,8 +137,14 @@ class AirSimCorridorEnv(BaseCorridorEnv):
         state = self.client.getMultirotorState()
         pos = state.kinematics_estimated.position
         ori = state.kinematics_estimated.orientation
-        pose = np.array([pos.x_val, pos.y_val, pos.z_val,
-                          ori.x_val, ori.y_val, ori.z_val, ori.w_val], dtype=np.float32)
+        if self._vins is not None:
+            p_est, q_est, _, _ = self._vins.latest()
+        else:
+            p_est = np.array([pos.x_val, pos.y_val, pos.z_val], dtype=np.float32)
+            q_est = np.array([ori.x_val, ori.y_val, ori.z_val, ori.w_val], dtype=np.float32)
+        if self._relative_pose:
+            p_est = p_est - np.array([self._goal_xy[0], self._goal_xy[1], 0.0], dtype=np.float32)
+        pose = np.concatenate([p_est, q_est]).astype(np.float32)
 
         imu_data = self.client.getImuData()
         imu = np.array([

@@ -22,9 +22,10 @@ class _FrameDataset(Dataset):
     """
 
     def __init__(self, episodes: list[Episode]):
-        self.rgb, self.seg, self.depth, self.theta = [], [], [], []
+        self.rgb, self.prev_rgb, self.seg, self.depth, self.theta = [], [], [], [], []
         for ep in episodes:
             self.rgb.extend(ep.rgb)
+            self.prev_rgb.extend([ep.rgb[max(i - 1, 0)] for i in range(len(ep.rgb))])
             self.seg.extend(ep.seg_mask)
             self.depth.extend(ep.depth)
             self.theta.extend(ep.theta_corr_gt)
@@ -34,27 +35,33 @@ class _FrameDataset(Dataset):
 
     def __getitem__(self, idx):
         rgb = torch.from_numpy(self.rgb[idx]).float().permute(2, 0, 1) / 255.0
+        prev_rgb = torch.from_numpy(self.prev_rgb[idx]).float().permute(2, 0, 1) / 255.0
         seg = torch.from_numpy(self.seg[idx]).long()
         depth = torch.from_numpy(np.asarray(self.depth[idx])).float()
         theta = torch.from_numpy(self.theta[idx]).float()
-        return rgb, seg, depth, theta
+        return rgb, prev_rgb, seg, depth, theta
 
 
 def train_sacr(sacr: SACR, episodes: list[Episode], cfg, device, logger: CSVLogger) -> SACR:
     dataset = _FrameDataset(episodes)
     loader = DataLoader(dataset, batch_size=cfg.training.perception_batch_size, shuffle=True, drop_last=True)
-    optim = torch.optim.Adam(sacr.parameters(), lr=cfg.sacr.lr)
+    optim = torch.optim.Adam(sacr.parameters(), lr=cfg.sacr.lr,
+                             eps=getattr(cfg.sacr, "adam_eps", 1e-8))
 
     sacr.train()
     step = 0
     for epoch in range(cfg.training.perception_epochs):
-        for rgb, seg, depth_gt, theta_gt in loader:
-            rgb, seg, depth_gt, theta_gt = rgb.to(device), seg.to(device), depth_gt.to(device), theta_gt.to(device)
+        for rgb, prev_rgb, seg, depth_gt, theta_gt in loader:
+            rgb, prev_rgb = rgb.to(device), prev_rgb.to(device)
+            seg, depth_gt, theta_gt = seg.to(device), depth_gt.to(device), theta_gt.to(device)
 
             out = sacr(rgb, need_seg=True)
+            with torch.no_grad():
+                prev_theta = sacr(prev_rgb).theta_corr
             losses = sacr_loss(out, seg, theta_gt, depth_target=depth_gt,
+                               prev_theta_corr=prev_theta,
                                lambda_geom=cfg.sacr.lambda_geom,
-                               lambda_depth=getattr(cfg.sacr, "lambda_depth", 0.2),
+                               lambda_depth=getattr(cfg.sacr, "lambda_depth", 1.0),
                                lambda_unc=getattr(cfg.sacr, "lambda_unc", 0.5),
                                mu_smooth=cfg.sacr.mu_smooth)
 
@@ -73,14 +80,16 @@ def train_camr(sacr: SACR, camr: CAMR, episodes: list[Episode], cfg, device, log
     for p in sacr.parameters():
         p.requires_grad_(False)
 
-    optim = torch.optim.Adam(camr.parameters(), lr=cfg.camr.lr)
+    optim = torch.optim.Adam(camr.parameters(), lr=cfg.camr.lr,
+                             eps=getattr(cfg.camr, "adam_eps", 1e-8))
     window_size = cfg.camr.window_size
+    stride = getattr(cfg.camr, "stride", 1)
     step = 0
 
     camr.train()
     for epoch in range(cfg.training.perception_epochs):
         for ep in episodes:
-            if len(ep.rgb) < window_size + 1:
+            if len(ep.rgb) < (window_size - 1) * stride + 2:
                 continue
             tensors = episode_to_tensors(ep, device)
             with torch.no_grad():
@@ -91,8 +100,8 @@ def train_camr(sacr: SACR, camr: CAMR, episodes: list[Episode], cfg, device, log
             L = x_seq.shape[0]
 
             prev_h_t = None
-            for t in range(window_size - 1, L - 1):
-                window = x_seq[t - window_size + 1: t + 1].unsqueeze(0)  # (1, T, input_dim)
+            for t in range((window_size - 1) * stride, L - 1):
+                window = x_seq[t - (window_size - 1) * stride: t + 1: stride].unsqueeze(0)
                 out = camr(window)
                 predicted_next = camr.predict_next(out.h_t)
                 target_next = z_struct_aug[t + 1].unsqueeze(0)

@@ -4,12 +4,10 @@ name: Gazebo sim (integration)
 # Gazebo and ROS 2 + MAVROS images, brings them up headless/CPU-only, and runs a
 # policy-free GazeboROSEnv reset()+step() smoke. NOT run on every push -- the
 # image build is long (~20-40 min, PX4 from source) and GPU-less rendering is
-# slow -- so it runs on manual dispatch and nightly only. The fast per-module CI
-# lives in ci.yml.
+# slow -- so it runs on manual dispatch only. The fast per-module CI lives in
+# ci.yml.
 on:
   workflow_dispatch:
-  schedule:
-    - cron: "0 3 * * *"   # nightly 03:00 UTC
 
 concurrency:
   group: gazebo-sim-${{ github.ref }}
@@ -44,7 +42,8 @@ jobs:
 
       - name: Generate the corridor world
         run: |
-          pip install numpy
+          # world_gen defers an import of star_nav.utils.config, which needs pyyaml
+          pip install numpy pyyaml
           cd ros_gazebo_bridge
           python -m ros_gazebo_bridge.world_gen --scenario A --out worlds/scenario_a
           ls -la worlds/

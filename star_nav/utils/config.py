@@ -36,14 +36,33 @@ class ConfigNode:
         return out
 
 
+def _merge(base: Dict[str, Any], overrides: Dict[str, Any]) -> Dict[str, Any]:
+    merged = copy.deepcopy(base)
+    for key, value in overrides.items():
+        if isinstance(value, dict) and isinstance(merged.get(key), dict):
+            merged[key] = _merge(merged[key], value)
+        else:
+            merged[key] = value
+    return merged
+
+
 def load_config(path: str | Path = None, overrides: Dict[str, Any] = None) -> ConfigNode:
     """Load ``configs/default.yaml`` (or a custom path) and apply optional
     dotted-key overrides, e.g. ``{"agss_ppo.lr": 1e-4}``.
     """
     if path is None:
         path = Path(__file__).resolve().parents[2] / "configs" / "default.yaml"
+    path = Path(path)
     with open(path, "r", encoding="utf-8") as f:
         data = yaml.safe_load(f)
+    parent = data.pop("extends", None)
+    if parent is not None:
+        parent_path = (path.parent / parent).resolve()
+        with open(parent_path, "r", encoding="utf-8") as f:
+            base = yaml.safe_load(f)
+        if "extends" in base:
+            raise ValueError("Nested configuration inheritance is unsupported")
+        data = _merge(base, data)
 
     if overrides:
         data = copy.deepcopy(data)

@@ -55,17 +55,18 @@ def build_perception(cfg, device, args):
     camr = CAMR(z_struct_aug_dim=sacr.z_struct_aug_dim, pose_dim=cfg.camr.pose_dim,
                 imu_dim=cfg.camr.imu_dim, window_size=cfg.camr.window_size,
                 hidden_dim=cfg.camr.hidden_dim,
+                use_attention=getattr(cfg.camr, "use_attention", False),
                 predict_occupancy=getattr(cfg.camr, "predict_occupancy", False),
                 occ_dim=getattr(cfg.camr, "occ_dim", 2)).to(device)
     sacr_mock = os.path.join(args.out_dir, "sacr.pt")
     camr_mock = os.path.join(args.out_dir, "camr.pt")
 
     if args.sacr_ckpt and args.camr_ckpt:
-        sacr.load_state_dict(torch.load(args.sacr_ckpt, map_location=device))
+        sacr.load_compatible_state_dict(torch.load(args.sacr_ckpt, map_location=device))
         camr.load_state_dict(torch.load(args.camr_ckpt, map_location=device))
         print(f"loaded frozen perception from {args.sacr_ckpt} + {args.camr_ckpt}", flush=True)
     elif os.path.exists(sacr_mock) and os.path.exists(camr_mock) and not args.fresh_perception:
-        sacr.load_state_dict(torch.load(sacr_mock, map_location=device))
+        sacr.load_compatible_state_dict(torch.load(sacr_mock, map_location=device))
         camr.load_state_dict(torch.load(camr_mock, map_location=device))
         print(f"loaded cached Mock perception ({sacr_mock} + {camr_mock})", flush=True)
     else:
@@ -171,7 +172,9 @@ def main(argv=None):
                      actor_hidden=cfg.agss_ppo.actor_hidden, critic_hidden=cfg.agss_ppo.critic_hidden,
                      init_log_std=cfg.agss_ppo.init_log_std).to(device)
     agss = AGSSShield(d0=cfg.agss_ppo.d0, alpha=cfg.agss_ppo.alpha, complexity_dim=belief_dim, device=device,
-                      beta=getattr(cfg.agss_ppo, "beta_unc", 0.0), gamma=getattr(cfg.agss_ppo, "gamma_occ", 0.0))
+                      beta=getattr(cfg.agss_ppo, "beta_unc", 0.0), gamma=getattr(cfg.agss_ppo, "gamma_occ", 0.0),
+                      tau=getattr(cfg.agss_ppo, "tau", 1.0),
+                      lateral_action_scale=getattr(cfg.agss_ppo, "lateral_action_scale", 1.0))
     R = cfg.sacr.depth_pool_regions
     unc_on = getattr(cfg.sacr, "depth_uncertainty", False)
 
@@ -194,9 +197,11 @@ def main(argv=None):
                 p = torch.sigmoid(camr.predict_occupancy(h))
             occ_left, occ_right = p[:, 0], p[:, 1]
         return d_left, d_right, sig_left, sig_right, occ_left, occ_right
-    optim = torch.optim.Adam(ac.parameters(), lr=cfg.agss_ppo.lr)
+    optim = torch.optim.Adam(ac.parameters(), lr=cfg.agss_ppo.lr,
+                             eps=getattr(cfg.agss_ppo, "adam_eps", 1e-8))
     buffer = RolloutBuffer(belief_dim, cfg.agss_ppo.action_dim, cfg.agss_ppo.rollout_steps, device)
-    wbuf = CausalWindowBuffer(cfg.camr.window_size, camr.input_dim, device)
+    wbuf = CausalWindowBuffer(cfg.camr.window_size, camr.input_dim, device,
+                             stride=getattr(cfg.camr, "stride", 1))
     rng = np.random.default_rng(cfg.seed)
     scenarios = list(cfg.env.scenarios.to_dict().keys())
     weathers = cfg.env.weather_conditions

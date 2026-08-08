@@ -1,6 +1,11 @@
 """Runs the full frozen STAR-Nav pipeline (SACR + CAMR + AGSS-PPO) across
 every Scenario x weather-condition cell and aggregates the metrics from
 `metrics.py` into a table shaped like the paper's Tables 9-12.
+
+Simulated evaluation samples actions from the Gaussian policy, as in
+training; the raw sample is clipped to [-1, 1] before the AGSS projection.
+Pass ``deterministic=True`` to evaluate the policy mean instead (the mode
+used on the physical vehicle).
 """
 from __future__ import annotations
 
@@ -25,9 +30,11 @@ def run_episode(
     scenario: str,
     weather: str,
     device: torch.device,
+    deterministic: bool = False,
 ) -> EpisodeRecord:
     obs = env.reset(scenario=scenario, weather=weather)
-    window_buffer = CausalWindowBuffer(camr.window_size, camr.input_dim, device)
+    window_buffer = CausalWindowBuffer(camr.window_size, camr.input_dim, device,
+                                      stride=getattr(camr, "stride", 1))
 
     def to_tensor(x, dtype=torch.float32):
         return torch.as_tensor(x, dtype=dtype, device=device).unsqueeze(0)
@@ -49,9 +56,21 @@ def run_episode(
         window = window_buffer.push(x_t)
         h_t = camr(window).h_t
 
-        sample = actor_critic.act(h_t, deterministic=True)
-        d_left, d_right = z_struct_aug[:, -3], z_struct_aug[:, -1]
-        projection = agss.project(sample.action, h_t, d_left, d_right)
+        sample = actor_critic.act(h_t, deterministic=deterministic)
+        bounded = sample.action.clamp(-1.0, 1.0)
+        d_left = z_struct_aug[:, sacr.struct_dim]
+        d_right = z_struct_aug[:, sacr.struct_dim + 2]
+        sigma_left = sigma_right = None
+        if sacr.depth_uncertainty:
+            logvar = z_struct_aug[:, sacr.struct_dim + sacr.depth_pool_regions:]
+            sigma_left = torch.exp(0.5 * logvar[:, 0].clamp(-6.0, 1.4))
+            sigma_right = torch.exp(0.5 * logvar[:, 2].clamp(-6.0, 1.4))
+        occ_left = occ_right = None
+        if camr.use_occupancy:
+            occ = torch.sigmoid(camr.predict_occupancy(h_t))
+            occ_left, occ_right = occ[:, 0], occ[:, 1]
+        projection = agss.project(bounded, h_t, d_left, d_right,
+                                  sigma_left, sigma_right, occ_left, occ_right)
 
         result = env.step(projection["safe_action"].squeeze(0).cpu().numpy())
 
@@ -94,6 +113,7 @@ def evaluate_all(
     weather_conditions: list[str],
     episodes_per_cell: int,
     device: torch.device,
+    deterministic: bool = False,
 ) -> pd.DataFrame:
     sacr.eval()
     camr.eval()
@@ -103,7 +123,7 @@ def evaluate_all(
     for scenario in scenarios:
         for weather in weather_conditions:
             records = [
-                run_episode(env, sacr, camr, actor_critic, agss, scenario, weather, device)
+                run_episode(env, sacr, camr, actor_critic, agss, scenario, weather, device, deterministic)
                 for _ in range(episodes_per_cell)
             ]
             metrics = summarize(records)

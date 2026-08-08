@@ -67,7 +67,8 @@ def rollout(env, sacr, camr, ac, agss, cfg, device, seed, max_steps):
     """One deterministic episode. Returns (traj Nx2, reached_x, success, collided)."""
     R = cfg.sacr.depth_pool_regions
     unc_on = getattr(cfg.sacr, "depth_uncertainty", False)
-    wbuf = CausalWindowBuffer(cfg.camr.window_size, camr.input_dim, device)
+    wbuf = CausalWindowBuffer(cfg.camr.window_size, camr.input_dim, device,
+                             stride=getattr(cfg.camr, "stride", 1))
 
     def to_t(x):
         return torch.as_tensor(x, dtype=torch.float32, device=device).unsqueeze(0)
@@ -210,9 +211,10 @@ def main(argv=None):
                 depth_pool_regions=cfg.sacr.depth_pool_regions, depth_uncertainty=unc_on).to(device)
     camr = CAMR(z_struct_aug_dim=sacr.z_struct_aug_dim, pose_dim=cfg.camr.pose_dim,
                 imu_dim=cfg.camr.imu_dim, window_size=cfg.camr.window_size, hidden_dim=cfg.camr.hidden_dim,
+                use_attention=getattr(cfg.camr, "use_attention", False),
                 predict_occupancy=getattr(cfg.camr, "predict_occupancy", False),
                 occ_dim=getattr(cfg.camr, "occ_dim", 2)).to(device)
-    sacr.load_state_dict(torch.load(args.sacr_ckpt, map_location=device))
+    sacr.load_compatible_state_dict(torch.load(args.sacr_ckpt, map_location=device))
     camr.load_state_dict(torch.load(args.camr_ckpt, map_location=device))
     sacr.eval(); camr.eval()
 
@@ -223,7 +225,9 @@ def main(argv=None):
     _load_policy(ac, args.policy_ckpt, device)
     ac.eval()
     agss = AGSSShield(d0=cfg.agss_ppo.d0, alpha=cfg.agss_ppo.alpha, complexity_dim=belief_dim, device=device,
-                      beta=getattr(cfg.agss_ppo, "beta_unc", 0.0), gamma=getattr(cfg.agss_ppo, "gamma_occ", 0.0))
+                      beta=getattr(cfg.agss_ppo, "beta_unc", 0.0), gamma=getattr(cfg.agss_ppo, "gamma_occ", 0.0),
+                      tau=getattr(cfg.agss_ppo, "tau", 1.0),
+                      lateral_action_scale=getattr(cfg.agss_ppo, "lateral_action_scale", 1.0))
 
     env = MockCorridorEnv(cfg.env)
     goal_x = cfg.env.area_size_m - 2.0

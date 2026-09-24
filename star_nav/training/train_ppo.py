@@ -53,7 +53,8 @@ def train_ppo(
     for p in camr.parameters():
         p.requires_grad_(False)
 
-    optim = torch.optim.Adam(actor_critic.parameters(), lr=cfg.agss_ppo.lr)
+    optim = torch.optim.Adam(actor_critic.parameters(), lr=cfg.agss_ppo.lr,
+                             eps=getattr(cfg.agss_ppo, "adam_eps", 1e-8))
     belief_dim = 2 * cfg.camr.hidden_dim
     buffer = RolloutBuffer(belief_dim, cfg.agss_ppo.action_dim, cfg.agss_ppo.rollout_steps, device)
     rng = np.random.default_rng(cfg.seed)
@@ -61,7 +62,8 @@ def train_ppo(
     scenarios = list(cfg.env.scenarios.to_dict().keys())
     weathers = cfg.env.weather_conditions
 
-    window_buffer = CausalWindowBuffer(cfg.camr.window_size, camr.input_dim, device)
+    window_buffer = CausalWindowBuffer(cfg.camr.window_size, camr.input_dim, device,
+                                      stride=getattr(cfg.camr, "stride", 1))
     episode_count = 0
     global_step = 0
 
@@ -81,8 +83,8 @@ def train_ppo(
         for _ in range(cfg.agss_ppo.rollout_steps):
             sample = actor_critic.act(h_t)
 
-            d_left = z_struct_aug[:, -3]   # region-pool order is [L, C, R]; see depth_net.region_aware_pool
-            d_right = z_struct_aug[:, -1]
+            d_left = z_struct_aug[:, sacr.struct_dim]
+            d_right = z_struct_aug[:, sacr.struct_dim + 2]
             projection = agss.project(sample.action, h_t, d_left, d_right)
             safe_action = projection["safe_action"].squeeze(0).cpu().numpy()
 

@@ -71,7 +71,7 @@ def main(argv=None):
                 geom_hidden=cfg.sacr.geom_hidden, struct_dim=cfg.sacr.struct_dim,
                 depth_pool_regions=cfg.sacr.depth_pool_regions,
                 depth_uncertainty=getattr(cfg.sacr, "depth_uncertainty", False)).to(device)
-    sacr.load_state_dict(torch.load(args.sacr_ckpt, map_location=device))
+    sacr.load_compatible_state_dict(torch.load(args.sacr_ckpt, map_location=device))
     print(f"loaded sim SACR from {args.sacr_ckpt}", flush=True)
 
     if args.freeze_encoder:

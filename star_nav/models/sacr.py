@@ -54,6 +54,16 @@ class GeometryHead(nn.Module):
 
 
 class SACR(nn.Module):
+    def load_compatible_state_dict(self, state: dict) -> None:
+        """Load public checkpoints that predate the unused S3 ablation gate.
+
+        All other missing or unexpected keys remain errors.
+        """
+        mismatch = self.load_state_dict(state, strict=False)
+        allowed = {"attn_rand.weight", "attn_rand.bias"}
+        if set(mismatch.missing_keys) not in (set(), allowed) or mismatch.unexpected_keys:
+            raise RuntimeError(f"Incompatible SACR checkpoint: {mismatch}")
+
     def __init__(
         self,
         in_channels: int = 3,
@@ -73,6 +83,7 @@ class SACR(nn.Module):
     ):
         super().__init__()
         self.feature_channels = feature_channels
+        self.struct_dim = struct_dim
         self.depth_pool_regions = depth_pool_regions
         self.depth_uncertainty = depth_uncertainty
         self.use_geometry = use_geometry

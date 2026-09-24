@@ -1,6 +1,6 @@
 # STAR-Nav default configuration.
-# Every value here is referenced by name in the paper's equations; see the
-# docstring at the top of each module in star_nav/ for the exact mapping.
+# Legacy demonstration settings compatible with the public Mock checkpoints.
+# The revised manuscript parameters are in configs/paper.yaml.
 
 seed: 42
 device: cuda   # falls back to cpu automatically if CUDA is unavailable
@@ -33,6 +33,8 @@ camr:
   pose_dim: 7                  # VIO pose: position (3) + quaternion (4)
   imu_dim: 6                   # tri-axis accelerometer + gyroscope
   window_size: 10              # T: causal sliding-window length
+  stride: 1                    # legacy demo samples consecutive frames
+  use_attention: false         # existing checkpoints have no attention weights
   hidden_dim: 128              # d_h: forward/backward LSTM hidden size
   beta_temp: 0.5               # weight of L_temp in L_CAMR
   lr: 3.0e-4
@@ -68,6 +70,7 @@ agss_ppo:
   # AGSS adaptive safety margin: d_safe = d0 + alpha*c_t [+ beta*sigma + gamma*occ]
   d0: 0.6                       # base clearance (m)
   alpha: 1.2                    # adaptive scaling factor
+  tau: 1.0                      # reaction horizon (s); the paper's bound divides clearance by tau
   # NOTE: named beta_unc/gamma_occ, NOT beta/gamma -- agss_ppo.gamma is already
   # the PPO discount factor (0.99). A `gamma` key here would silently overwrite
   # it and break long-horizon credit assignment.

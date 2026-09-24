@@ -92,12 +92,13 @@ def main(argv=None):
               "L_depth/L_unc will be 0 (uncertainty head trains only via z_struct_aug grads).", flush=True)
 
     sacr = build_sacr(cfg, device)
-    optim = torch.optim.Adam(sacr.parameters(), lr=cfg.sacr.lr)
+    optim = torch.optim.Adam(sacr.parameters(), lr=cfg.sacr.lr,
+                             eps=getattr(cfg.sacr, "adam_eps", 1e-8))
 
     start_epoch, best_val = 0, float("inf")
     if args.resume:
         ckpt = torch.load(args.resume, map_location=device)
-        sacr.load_state_dict(ckpt["model"])
+        sacr.load_compatible_state_dict(ckpt["model"])
         if "optim" in ckpt:
             optim.load_state_dict(ckpt["optim"])
         start_epoch = ckpt.get("epoch", 0) + 1

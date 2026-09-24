@@ -80,9 +80,10 @@ def main(argv=None):
     camr = CAMR(z_struct_aug_dim=sacr.z_struct_aug_dim, pose_dim=cfg.camr.pose_dim,
                 imu_dim=cfg.camr.imu_dim, window_size=cfg.camr.window_size,
                 hidden_dim=cfg.camr.hidden_dim,
+                use_attention=getattr(cfg.camr, "use_attention", False),
                 predict_occupancy=getattr(cfg.camr, "predict_occupancy", False),
                 occ_dim=getattr(cfg.camr, "occ_dim", 2)).to(device)
-    sacr.load_state_dict(torch.load(args.sacr_ckpt, map_location=device))
+    sacr.load_compatible_state_dict(torch.load(args.sacr_ckpt, map_location=device))
     camr.load_state_dict(torch.load(args.camr_ckpt, map_location=device))
     sacr.eval(); camr.eval()
     R = cfg.sacr.depth_pool_regions
@@ -94,8 +95,11 @@ def main(argv=None):
     ac.load_state_dict(torch.load(args.policy_ckpt, map_location=device))  # Mock-trained weights load directly
     ac.eval()
     agss = AGSSShield(d0=cfg.agss_ppo.d0, alpha=cfg.agss_ppo.alpha, complexity_dim=belief_dim, device=device,
-                      beta=getattr(cfg.agss_ppo, "beta_unc", 0.0), gamma=getattr(cfg.agss_ppo, "gamma_occ", 0.0))
-    wbuf = CausalWindowBuffer(cfg.camr.window_size, camr.input_dim, device)
+                      beta=getattr(cfg.agss_ppo, "beta_unc", 0.0), gamma=getattr(cfg.agss_ppo, "gamma_occ", 0.0),
+                      tau=getattr(cfg.agss_ppo, "tau", 1.0),
+                      lateral_action_scale=getattr(cfg.agss_ppo, "lateral_action_scale", 1.0))
+    wbuf = CausalWindowBuffer(cfg.camr.window_size, camr.input_dim, device,
+                             stride=getattr(cfg.camr, "stride", 1))
 
     def shield_terms(z, h):
         """Per-side (d_left, d_right, sigma_left, sigma_right, occ_left, occ_right)

@@ -43,7 +43,8 @@ class _FrameDataset(Dataset):
 def train_sacr(sacr: SACR, episodes: list[Episode], cfg, device, logger: CSVLogger) -> SACR:
     dataset = _FrameDataset(episodes)
     loader = DataLoader(dataset, batch_size=cfg.training.perception_batch_size, shuffle=True, drop_last=True)
-    optim = torch.optim.Adam(sacr.parameters(), lr=cfg.sacr.lr)
+    optim = torch.optim.Adam(sacr.parameters(), lr=cfg.sacr.lr,
+                             eps=getattr(cfg.sacr, "adam_eps", 1e-8))
 
     sacr.train()
     step = 0
@@ -73,14 +74,16 @@ def train_camr(sacr: SACR, camr: CAMR, episodes: list[Episode], cfg, device, log
     for p in sacr.parameters():
         p.requires_grad_(False)
 
-    optim = torch.optim.Adam(camr.parameters(), lr=cfg.camr.lr)
+    optim = torch.optim.Adam(camr.parameters(), lr=cfg.camr.lr,
+                             eps=getattr(cfg.camr, "adam_eps", 1e-8))
     window_size = cfg.camr.window_size
+    stride = getattr(cfg.camr, "stride", 1)
     step = 0
 
     camr.train()
     for epoch in range(cfg.training.perception_epochs):
         for ep in episodes:
-            if len(ep.rgb) < window_size + 1:
+            if len(ep.rgb) < (window_size - 1) * stride + 2:
                 continue
             tensors = episode_to_tensors(ep, device)
             with torch.no_grad():
@@ -91,8 +94,8 @@ def train_camr(sacr: SACR, camr: CAMR, episodes: list[Episode], cfg, device, log
             L = x_seq.shape[0]
 
             prev_h_t = None
-            for t in range(window_size - 1, L - 1):
-                window = x_seq[t - window_size + 1: t + 1].unsqueeze(0)  # (1, T, input_dim)
+            for t in range((window_size - 1) * stride, L - 1):
+                window = x_seq[t - (window_size - 1) * stride: t + 1: stride].unsqueeze(0)
                 out = camr(window)
                 predicted_next = camr.predict_next(out.h_t)
                 target_next = z_struct_aug[t + 1].unsqueeze(0)

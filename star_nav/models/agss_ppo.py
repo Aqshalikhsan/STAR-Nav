@@ -9,9 +9,9 @@ Critic: identical trunk, scalar head                                 V(h_t)
 AGSS (deterministic, no gradient back to the actor -- Invariant I5):
   c_t       = sigmoid(w_c^T h_t + b_c)
   d_safe    = d_0 + alpha * c_t
-  v_y_min   = -(d_L_bar - d_safe)
-  v_y_max   =  d_R_bar - d_safe
-  v_y_safe  = clip(v_y, v_y_min, v_y_max)
+  v_y_min   = -(d_L_bar - d_safe) / tau
+  v_y_max   =  (d_R_bar - d_safe) / tau
+  v_y_safe  = 0 if v_y_max < v_y_min else clip(v_y, v_y_min, v_y_max)
   a_safe    = (v_x, v_y_safe, v_z, omega)
 """
 from __future__ import annotations
@@ -21,6 +21,7 @@ from typing import Optional
 
 import torch
 import torch.nn as nn
+import torch.nn.functional as F
 from torch.distributions import Normal
 
 
@@ -100,6 +101,33 @@ class ActorCritic(nn.Module):
         return log_prob, entropy, value
 
 
+class ComplexityHead(nn.Module):
+    """Paper's independently supervised corridor-complexity head.
+
+    Optimizing its loss updates only this head; CAMR/PPO receive no gradient.
+    This class defines the method and does not train anything on import.
+    """
+
+    def __init__(self, belief_dim: int, w_ref: float = 8.0):
+        super().__init__()
+        if w_ref <= 0:
+            raise ValueError("The nominal corridor width must be positive")
+        self.linear = nn.Linear(belief_dim, 1)
+        self.w_ref = w_ref
+
+    def forward(self, h_t: torch.Tensor) -> torch.Tensor:
+        return torch.sigmoid(self.linear(h_t.detach()).squeeze(-1))
+
+    def target(self, d_left: torch.Tensor, d_right: torch.Tensor) -> torch.Tensor:
+        return torch.clamp(1.0 - (d_left + d_right) / self.w_ref, 0.0, 1.0)
+
+    def loss(self, h_t: torch.Tensor, d_left: torch.Tensor, d_right: torch.Tensor) -> torch.Tensor:
+        return F.binary_cross_entropy(self(h_t), self.target(d_left, d_right).detach())
+
+    def shield_weights(self) -> tuple[torch.Tensor, torch.Tensor]:
+        return self.linear.weight.detach().flatten(), self.linear.bias.detach().flatten()
+
+
 class AGSSShield:
     """Deterministic post-policy projection layer. Stateless w.r.t. the
     computational graph: everything here runs under `torch.no_grad()`
@@ -107,9 +135,17 @@ class AGSSShield:
     """
 
     def __init__(self, d0: float, alpha: float, complexity_dim: int, device: torch.device,
-                 beta: float = 0.0, gamma: float = 0.0):
+                 beta: float = 0.0, gamma: float = 0.0, tau: float = 1.0,
+                 complexity_weights: Optional[tuple[torch.Tensor, torch.Tensor]] = None,
+                 lateral_action_scale: float = 1.0):
+        if tau <= 0:
+            raise ValueError("The AGSS reaction horizon tau must be positive")
+        if lateral_action_scale <= 0:
+            raise ValueError("The lateral action scale must be positive")
         self.d0 = d0
         self.alpha = alpha
+        self.tau = tau
+        self.lateral_action_scale = lateral_action_scale
         # beta:  weight on SACR's per-side depth uncertainty (sigma) -- widens
         #        the margin where perception is unsure (uncertainty-aware).
         # gamma: weight on CAMR's predicted future actor occupancy per side --
@@ -117,14 +153,22 @@ class AGSSShield:
         #        (anticipatory). Both 0 -> identical to the original shield.
         self.beta = beta
         self.gamma = gamma
-        # w_c, b_c: complexity estimator c_t = sigmoid(w_c^T h_t + b_c).
-        # Kept as a small trainable-free linear map (fixed random projection)
-        # since the paper treats c_t as a scalar summary of h_t, not a policy
-        # parameter subject to the PPO objective (Invariant I5).
-        gen = torch.Generator(device="cpu").manual_seed(0)
-        self.w_c = torch.randn(complexity_dim, generator=gen) / (complexity_dim ** 0.5)
-        self.w_c = self.w_c.to(device)
-        self.b_c = torch.zeros(1, device=device)
+        # Paper evaluation requires the separately trained complexity head.
+        # The fixed projection remains available for legacy demonstrations;
+        # it must not be described as the paper's trained head.
+        if complexity_weights is None:
+            gen = torch.Generator(device="cpu").manual_seed(0)
+            self.w_c = torch.randn(complexity_dim, generator=gen) / (complexity_dim ** 0.5)
+            self.w_c = self.w_c.to(device)
+            self.b_c = torch.zeros(1, device=device)
+            self.complexity_source = "fixed_demo_projection"
+        else:
+            w_c, b_c = complexity_weights
+            if w_c.numel() != complexity_dim or b_c.numel() != 1:
+                raise ValueError("Complexity head dimensions do not match the belief state")
+            self.w_c = w_c.detach().reshape(complexity_dim).to(device)
+            self.b_c = b_c.detach().reshape(1).to(device)
+            self.complexity_source = "supplied_trained_weights"
 
     def complexity(self, h_t: torch.Tensor) -> torch.Tensor:
         """c_t = sigmoid(w_c^T h_t + b_c) in (0, 1)."""
@@ -170,15 +214,17 @@ class AGSSShield:
         d_safe_left = self.safety_margin(c_t, sigma_left, occ_left)
         d_safe_right = self.safety_margin(c_t, sigma_right, occ_right)
 
-        v_y_min = -(d_left - d_safe_left)
-        v_y_max = d_right - d_safe_right
-        v_y_max = torch.maximum(v_y_max, v_y_min)  # guard against infeasible/degenerate geometry
+        v_y_min = -(d_left - d_safe_left) / self.tau
+        v_y_max = (d_right - d_safe_right) / self.tau
+        collapsed = v_y_max < v_y_min
 
-        v_y = action[:, 1]
-        v_y_safe = torch.max(torch.min(v_y, v_y_max), v_y_min)  # elementwise per-sample clamp
+        # PPO/environment actions may be normalized; paper bounds are m/s.
+        v_y = action[:, 1] * self.lateral_action_scale
+        clipped = torch.max(torch.min(v_y, v_y_max), v_y_min)
+        v_y_safe = torch.where(collapsed, torch.zeros_like(v_y), clipped)
 
         safe_action = action.clone()
-        safe_action[:, 1] = v_y_safe
+        safe_action[:, 1] = v_y_safe / self.lateral_action_scale
 
         return {
             "safe_action": safe_action,
@@ -188,6 +234,7 @@ class AGSSShield:
             "d_safe_right": d_safe_right,
             "v_y_min": v_y_min,
             "v_y_max": v_y_max,
+            "collapsed": collapsed,
             "intervened": (v_y_safe - v_y).abs() > 1e-6,
             "correction_magnitude": (v_y_safe - v_y).abs(),
         }

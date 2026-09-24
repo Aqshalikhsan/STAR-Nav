@@ -69,6 +69,7 @@ def main():
         geom_hidden=cfg.sacr.geom_hidden,
         struct_dim=cfg.sacr.struct_dim,
         depth_pool_regions=cfg.sacr.depth_pool_regions,
+        depth_uncertainty=getattr(cfg.sacr, "depth_uncertainty", False),
     ).to(device)
 
     camr = CAMR(
@@ -77,6 +78,9 @@ def main():
         imu_dim=cfg.camr.imu_dim,
         window_size=cfg.camr.window_size,
         hidden_dim=cfg.camr.hidden_dim,
+        use_attention=getattr(cfg.camr, "use_attention", False),
+        predict_occupancy=getattr(cfg.camr, "predict_occupancy", False),
+        occ_dim=getattr(cfg.camr, "occ_dim", 2),
     ).to(device)
 
     belief_dim = 2 * cfg.camr.hidden_dim
@@ -89,7 +93,9 @@ def main():
     ).to(device)
 
     agss = AGSSShield(d0=cfg.agss_ppo.d0, alpha=cfg.agss_ppo.alpha,
-                       complexity_dim=belief_dim, device=device)
+                       complexity_dim=belief_dim, device=device,
+                       tau=getattr(cfg.agss_ppo, "tau", 1.0),
+                       lateral_action_scale=getattr(cfg.agss_ppo, "lateral_action_scale", 1.0))
 
     # ---------------- Phase 1: perception-first pretraining ----------------
     print("\n=== Phase 1a: collecting rollout data for SACR/CAMR pretraining ===")

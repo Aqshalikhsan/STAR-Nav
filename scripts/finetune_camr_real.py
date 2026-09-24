@@ -72,7 +72,7 @@ def main(argv=None):
                 geom_hidden=cfg.sacr.geom_hidden, struct_dim=cfg.sacr.struct_dim,
                 depth_pool_regions=cfg.sacr.depth_pool_regions,
                 depth_uncertainty=getattr(cfg.sacr, "depth_uncertainty", False)).to(device)
-    sacr.load_state_dict(torch.load(args.sacr_ckpt, map_location=device))
+    sacr.load_compatible_state_dict(torch.load(args.sacr_ckpt, map_location=device))
     sacr.eval()
     for prm in sacr.parameters():
         prm.requires_grad_(False)
@@ -110,6 +110,7 @@ def main(argv=None):
     # --- CAMR (occupancy head OFF: no trustworthy real ACTOR labels) ---
     camr = CAMR(z_struct_aug_dim=z_dim, pose_dim=cfg.camr.pose_dim, imu_dim=cfg.camr.imu_dim,
                 window_size=cfg.camr.window_size, hidden_dim=cfg.camr.hidden_dim,
+                use_attention=getattr(cfg.camr, "use_attention", False),
                 predict_occupancy=False).to(device)
     if args.camr_init and os.path.exists(args.camr_init):
         sd = torch.load(args.camr_init, map_location=device)

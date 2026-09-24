@@ -8,6 +8,44 @@ looks like the last and satellite positioning is unreliable under the canopy.
 Paper: *"Spatio-Temporal Adaptive Reinforcement Learning for Autonomous
 Monocular UAV Navigation in GPS-Denied Repetitive Environment."*
 
+The runnable `configs/default.yaml` is a demonstration profile, not the
+hyperparameter table used for the revised paper. In particular, the paper uses
+an independently supervised corridor-complexity head, whereas the legacy demo
+shield initializes a fixed projection and enables optional uncertainty and
+occupancy margin terms absent from the reported AGSS equation. The paper's
+reported results require
+the corresponding trained head and evaluation checkpoints; this repository's
+PPO checkpoint alone does not contain those head weights. No training is
+performed when running the evaluation code.
+
+### Revised-paper algorithm and checkpoint compatibility
+
+`configs/paper.yaml` records the revised manuscript's hyperparameters: CAMR
+uses an eight-frame causal window sampled every eight camera frames, with
+attention over all window positions; AGSS uses `d0=0.60 m`, `kappa=0.35 m`,
+`tau=1.0 s`, and a supervised complexity head. Its projection converts the
+normalized PPO lateral action to m/s before applying the clearance bounds.
+The paper profile also disables the demonstration-only uncertainty and future
+occupancy terms. `ComplexityHead` implements the manuscript's detached-belief
+binary cross-entropy target; loading a paper evaluation requires its separately
+trained `complexity.pt` weights. The evaluation command stops with a clear
+error when those weights are absent.
+
+The public `checkpoints/mock/{sacr,camr,ppo}.pt` can be evaluated immediately
+with the legacy demonstration profile:
+
+```bash
+python scripts/run_eval_all.py --config configs/default.yaml \
+  --checkpoint-dir checkpoints/mock --episodes-per-cell 20 --out results.csv
+```
+
+That command runs inference only. It uses the checkpoint-compatible terminal
+CAMR state and the demo's fixed complexity projection, so its output is a
+working pipeline check rather than a reproduction of the revised paper's
+reported metrics. Replacing the public checkpoint with the paper profile
+requires matching SACR/CAMR/PPO weights and the supervised complexity head;
+checkpoint architecture and input sampling must match the selected profile.
+
 > **Why Gazebo + Docker?** Running Rung 2 needs a full Unreal Engine 4.27
 > install to open the map, which is heavy to set up. To make the flight stack
 > easy for a reviewer to try, this repository provides a Dockerized Gazebo + PX4
@@ -52,7 +90,8 @@ A causal sliding-window recurrent module that fuses the current structural
 descriptor with a short history into a single belief state `h_t`. This gives
 the agent temporal context (progress along the corridor, recently passed
 obstacles), so it doesn't get "lost" among identical rows. `h_t` is the
-**sole** state handed to the controller.
+policy's learned state. The shield also receives the left and right metric
+clearance estimates directly from SACR.
 
 ### 3. AGSS-PPO: controller + Adaptive Geometric Safety Shield
 *`star_nav/models/agss_ppo.py` (paper §3.4)*
@@ -60,11 +99,13 @@ obstacles), so it doesn't get "lost" among identical rows. `h_t` is the
 A PPO actor-critic maps `h_t` to a 4-DoF velocity command. Wrapped around it,
 the **Adaptive Geometric Safety Shield** tightens the allowable lateral
 velocity as proximity to trunks rises (`d_safe = d_0 + α·c_t`), clipping unsafe
-commands *before* they reach the drone. The shield is non-learned and never
-feeds gradients back into PPO, so safety is a hard geometric guarantee rather
-than something the policy has to learn to respect.
+commands *before* they reach the drone. Its lateral projection is a geometric
+feasibility filter under accurate clearance and velocity tracking over the
+reaction horizon. It is not a forward-invariance or collision-free guarantee:
+braking distance, tracking error, depth error, and moving obstacles are not
+included in the projection model.
 
-## Training: simulation first, then real-world fine-tuning
+## Training and the paper's field deployment
 
 Every module is trained on a **digital twin** of the plantation before it ever
 sees a real drone. STAR-Nav builds the twin from procedurally generated
@@ -73,7 +114,7 @@ rollouts *and* free ground truth (segmentation masks, depth, corridor geometry)
 that real footage cannot label at scale:
 
 - **SACR** is pretrained on the synthetic RGB / depth / segmentation the twin
-  renders (`scripts/train_sacr.py`).
+  renders, including metric-depth supervision (`scripts/train_sacr.py`).
 - **CAMR** is pretrained on the same rollouts, learning the temporal belief
   (`scripts/train_camr.py`).
 - **AGSS-PPO** is then trained by reinforcement over the *frozen* perception, in
@@ -98,10 +139,13 @@ that real footage cannot label at scale:
 
 <p align="center"><em>One training sample from the digital twin: the simulator renders an RGB frame and its free segmentation ground truth (trunk / ground / sky), the supervised targets SACR learns from.</em></p>
 
-To close the sim-to-real gap, the perception modules are then **fine-tuned on
-real-world imagery** captured from actual plantation flights
-(`scripts/finetune_sacr_real.py`, `scripts/finetune_camr_real.py`), transferring
-the trunk / free-space structure onto real footage:
+For the field trials reported in the revised paper, the navigation encoder,
+depth and geometry branches, CAMR, PPO policy, and shield parameters remained
+at their simulation-trained values. Only the separate semantic-mask decoder
+was adapted using public oil-palm images from other plantations. No test-corridor
+flight image was used for that adaptation. The repository also contains broader
+SACR/CAMR fine-tuning scripts for separate experiments; those scripts do not
+describe the paper's field-trial protocol.
 
 <p align="center">
   <img src="renders/sacr_on_your_video.png" width="860" alt="SACR trunk segmentation on real FPV video"><br>
@@ -216,13 +260,14 @@ code).
 The implementation enforces the paper's separation of concerns structurally, at
 the API level:
 
-- **Raw perception stays inside SACR:** only the structural descriptor leaves;
-  depth maps and intermediate features are not reachable by the RL loop.
-- **CAMR's `h_t` is the only downstream state:** the controller and shield
-  accept nothing else; there is no path that re-injects raw features.
+- **Raw perception stays inside SACR:** the structural descriptor and the two
+  pooled metric clearances leave SACR; dense depth maps remain internal.
+- **CAMR's `h_t` is the policy's learned state:** AGSS also reads the two pooled
+  clearances directly to construct its lateral velocity bounds.
 - **The safety shield is gradient-isolated:** PPO's ratio is computed from the
-  raw candidate action, never the shielded one, so the shield can't distort the
-  policy gradient.
+  raw candidate action, never the shielded one. When AGSS binds, the executed
+  transition differs from the sampled action and the PPO update has a residual
+  on-policy mismatch, as discussed in the paper.
 
 ## Getting started
 
@@ -248,7 +293,7 @@ python scripts/run_train_all.py --config configs/default.yaml
 **Or module by module**, for finer control over each stage:
 
 ```bash
-# Phase 1a: SACR (structure perception).  Loss L_seg + λ·L_geom
+# Phase 1a: SACR (structure perception). Loss L_seg + λ·L_geom + λ_d·L_depth
 python scripts/train_sacr.py --data data/sacr_gazebo_dataset.npz --epochs 40
 
 # Phase 1b: CAMR (temporal memory).        Loss L_pred + β·L_temp
@@ -260,8 +305,8 @@ python scripts/train_camr.py --data data/sacr_gazebo_dataset.npz --epochs 60
 python scripts/train_ppo.py --curriculum --iterations 2000
 ```
 
-**Fine-tune the perception on real-world data** (after Phase 1), to close the
-sim-to-real gap:
+**Optional broader fine-tuning experiments, outside the reported field-trial
+protocol:**
 
 ```bash
 python scripts/finetune_sacr_real.py    # SACR on real plantation imagery

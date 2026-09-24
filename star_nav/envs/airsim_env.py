@@ -38,7 +38,11 @@ class AirSimCorridorEnv(BaseCorridorEnv):
         self.client.enableApiControl(True)
         self.client.armDisarm(True)
 
-        self._max_forward_speed = cfg.get("max_forward_speed", 2.5) if hasattr(cfg, "get") else 2.5
+        self._max_forward_speed = getattr(cfg, "max_forward_speed", 2.5)
+        self.reward_w_progress = getattr(cfg, "reward_w_progress", 1.0)
+        self.reward_w_smooth = getattr(cfg, "reward_w_smooth", 0.05)
+        self.reward_w_alive = getattr(cfg, "reward_w_alive", 1.0)
+        self.c_alive = getattr(cfg, "c_alive", 0.01)
         self._max_yaw_rate = np.deg2rad(120.0)
         self.dt = 0.2
         self.max_steps = cfg.episode_max_steps
@@ -88,7 +92,9 @@ class AirSimCorridorEnv(BaseCorridorEnv):
         d_omega = omega - self._prev_omega
         d_v = np.array([v_x, v_y, v_z]) - self._prev_v
         r_smooth = -abs(d_omega) - float(np.linalg.norm(d_v))
-        reward = 1.0 * r_progress + 0.05 * r_smooth + 0.01 * 1.0
+        reward = (self.reward_w_progress * r_progress
+                  + self.reward_w_smooth * r_smooth
+                  + self.reward_w_alive * self.c_alive)
 
         self._prev_goal_dist = info.goal_distance
         self._prev_omega = omega

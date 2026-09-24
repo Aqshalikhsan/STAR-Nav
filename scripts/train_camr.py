@@ -128,7 +128,7 @@ def precompute_z(sacr, rgb, device, batch=8):
     return torch.cat(zs, 0).numpy()
 
 
-def episode_windows(x_seq, z, T, occ=None):
+def episode_windows(x_seq, z, T, occ=None, stride=1):
     """All causal windows for one episode (oldest->newest) + their next-z
     targets. windows: (M, T, input_dim); targets: (M, z_dim). Contiguous, so
     L_temp over consecutive rows is valid within this block. If ``occ`` (L, 2) is
@@ -136,10 +136,10 @@ def episode_windows(x_seq, z, T, occ=None):
     (M, 2) -- the frame whose belief h_t drives predict_occupancy.
     """
     L = len(x_seq)
-    if L < T + 1:
+    if L < (T - 1) * stride + 2:
         return None, None, None
-    idx = np.arange(T - 1, L - 1)
-    win = np.stack([x_seq[t - T + 1:t + 1] for t in idx], 0)
+    idx = np.arange((T - 1) * stride, L - 1)
+    win = np.stack([x_seq[t - (T - 1) * stride:t + 1:stride] for t in idx], 0)
     tgt = z[idx + 1]
     occ_tgt = occ[idx] if occ is not None else None
     return win, tgt, occ_tgt
@@ -169,7 +169,7 @@ def main(argv=None):
     N = len(rgb)
 
     sacr = build_sacr(cfg, device)
-    sacr.load_state_dict(torch.load(args.sacr_ckpt, map_location=device))
+    sacr.load_compatible_state_dict(torch.load(args.sacr_ckpt, map_location=device))
     for pm in sacr.parameters():
         pm.requires_grad_(False)
     print(f"device={device}  loaded frozen SACR from {args.sacr_ckpt}", flush=True)
@@ -197,7 +197,8 @@ def main(argv=None):
     train_blocks, val_blocks = [], []
     for (a, b) in eps:
         occ_ep = occ_full[a:b] if occ_full is not None else None
-        win, tgt, occ_tgt = episode_windows(x_all[a:b], z[a:b], T, occ_ep)
+        win, tgt, occ_tgt = episode_windows(x_all[a:b], z[a:b], T, occ_ep,
+                                           stride=getattr(cfg.camr, "stride", 1))
         if win is None:
             continue
         nval = max(1, int(len(win) * args.val_frac))
@@ -211,8 +212,10 @@ def main(argv=None):
 
     camr = CAMR(z_struct_aug_dim=sacr.z_struct_aug_dim, pose_dim=cfg.camr.pose_dim,
                 imu_dim=cfg.camr.imu_dim, window_size=T, hidden_dim=cfg.camr.hidden_dim,
-                predict_occupancy=occ_on, occ_dim=getattr(cfg.camr, "occ_dim", 2)).to(device)
-    optim = torch.optim.Adam(camr.parameters(), lr=cfg.camr.lr)
+                predict_occupancy=occ_on, occ_dim=getattr(cfg.camr, "occ_dim", 2),
+                use_attention=getattr(cfg.camr, "use_attention", False)).to(device)
+    optim = torch.optim.Adam(camr.parameters(), lr=cfg.camr.lr,
+                             eps=getattr(cfg.camr, "adam_eps", 1e-8))
     beta = cfg.camr.beta_temp
     lambda_occ = getattr(cfg.camr, "lambda_occ", 0.5)
 

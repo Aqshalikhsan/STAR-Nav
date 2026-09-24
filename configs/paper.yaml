@@ -1,0 +1,50 @@
+# Revised manuscript, Table 11 and Sections 3.2-3.4.
+# Requires manuscript-compatible trained checkpoints, including complexity.pt.
+# Public Mock checkpoints were trained with configs/default.yaml and remain a
+# separate demonstration; changing their inference profile would be invalid.
+extends: default.yaml
+
+sacr:
+  adam_eps: 1.0e-5
+  lambda_geom: 0.5
+  lambda_depth: 1.0
+  mu_smooth: 0.1
+  depth_uncertainty: false
+  lambda_unc: 0.0
+
+camr:
+  adam_eps: 1.0e-5
+  window_size: 8
+  stride: 8
+  use_attention: true
+  beta_temp: 0.2
+  predict_occupancy: false
+  lambda_occ: 0.0
+
+agss_ppo:
+  adam_eps: 1.0e-5
+  d0: 0.60
+  alpha: 0.35
+  tau: 1.0
+  lateral_action_scale: 2.5
+  w_ref: 8.0
+  beta_unc: 0.0
+  gamma_occ: 0.0
+  require_trained_complexity: true
+  entropy_coef: 0.0
+  minibatch_size: 64
+  reward_w_progress: 44.0508
+  reward_w_smooth: 28.7415
+  reward_w_alive: 1.0
+  c_alive: 0.010
+
+env:
+  name: airsim
+  max_forward_speed: 2.5
+  reward_w_progress: 44.0508
+  reward_w_smooth: 28.7415
+  reward_w_alive: 1.0
+  c_alive: 0.010
+
+training:
+  checkpoint_dir: checkpoints/paper

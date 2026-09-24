@@ -4,7 +4,8 @@ x_t = [z_struct_aug ; pose_t ; imu_raw_t]                      (fusion)
 W_t = [x_{t-T+1}, ..., x_t]                                    (causal window)
 h_fwd = LSTM_fwd(W_t)[-1]                                       (forward pass)
 h_rev = LSTM_rev(reverse(W_t))[-1]                              (reverse pass)
-h_t = [h_fwd ; h_rev] in R^{2*d_h}                              (belief state)
+h_t = attention([h_k^fwd ; h_k^rev] for k in W_t), or the legacy
+      terminal-state concatenation for public demonstration checkpoints.
 
 The window W_t contains only past and current observations (x_{t-T+1..t}),
 so running a second LSTM over it in reverse order is still causal at the
@@ -28,6 +29,7 @@ class CAMROutput:
     h_t: torch.Tensor         # (B, 2*d_h) -- sole state consumed by PPO & AGSS (I3)
     h_fwd: torch.Tensor       # (B, d_h)
     h_rev: torch.Tensor       # (B, d_h)
+    attention_weights: Optional[torch.Tensor] = None  # (B, T), paper CAMR
 
 
 class CAMR(nn.Module):
@@ -40,6 +42,7 @@ class CAMR(nn.Module):
         hidden_dim: int = 128,
         predict_occupancy: bool = False,
         occ_dim: int = 2,
+        use_attention: bool = False,
     ):
         super().__init__()
         self.window_size = window_size
@@ -47,9 +50,14 @@ class CAMR(nn.Module):
         self.input_dim = z_struct_aug_dim + pose_dim + imu_dim
         self.use_occupancy = predict_occupancy
         self.occ_dim = occ_dim
+        self.use_attention = use_attention
 
         self.lstm_fwd = nn.LSTM(self.input_dim, hidden_dim, batch_first=True)
         self.lstm_rev = nn.LSTM(self.input_dim, hidden_dim, batch_first=True)
+        if use_attention:
+            self.attn_key = nn.Linear(2 * hidden_dim, 2 * hidden_dim)
+            self.attn_query = nn.Linear(2 * hidden_dim, 2 * hidden_dim, bias=False)
+            self.attn_score = nn.Linear(2 * hidden_dim, 1, bias=False)
 
         # f_pred: predictive projection head used only for L_pred during training
         self.f_pred = nn.Sequential(
@@ -79,15 +87,24 @@ class CAMR(nn.Module):
         """window: (B, T, input_dim), oldest-to-newest, T <= window_size,
         containing only observations up to and including the current step.
         """
-        _, (h_n_fwd, _) = self.lstm_fwd(window)
+        fwd_seq, (h_n_fwd, _) = self.lstm_fwd(window)
         h_fwd = h_n_fwd[-1]                                   # (B, d_h), state at x_t
 
         reversed_window = torch.flip(window, dims=[1])
-        _, (h_n_rev, _) = self.lstm_rev(reversed_window)
+        rev_seq, (h_n_rev, _) = self.lstm_rev(reversed_window)
         h_rev = h_n_rev[-1]                                   # (B, d_h), state at x_{t-T+1}
 
-        h_t = torch.cat([h_fwd, h_rev], dim=-1)               # (B, 2*d_h)
-        return CAMROutput(h_t=h_t, h_fwd=h_fwd, h_rev=h_rev)
+        weights = None
+        if self.use_attention:
+            per_frame = torch.cat([fwd_seq, torch.flip(rev_seq, dims=[1])], dim=-1)
+            query = per_frame[:, -1:, :]
+            scores = self.attn_score(torch.tanh(self.attn_key(per_frame) + self.attn_query(query))).squeeze(-1)
+            weights = torch.softmax(scores, dim=1)
+            h_t = torch.sum(weights.unsqueeze(-1) * per_frame, dim=1)
+        else:
+            # Legacy terminal-state path for the existing public checkpoints.
+            h_t = torch.cat([h_fwd, h_rev], dim=-1)
+        return CAMROutput(h_t=h_t, h_fwd=h_fwd, h_rev=h_rev, attention_weights=weights)
 
     def predict_next(self, h_t: torch.Tensor) -> torch.Tensor:
         return self.f_pred(h_t)
@@ -107,11 +124,14 @@ class CausalWindowBuffer:
     unfolded directly from a stored sequence (see training/train_camr.py).
     """
 
-    def __init__(self, window_size: int, input_dim: int, device: torch.device):
+    def __init__(self, window_size: int, input_dim: int, device: torch.device, stride: int = 1):
+        if window_size < 1 or stride < 1:
+            raise ValueError("CAMR window size and stride must be positive")
         self.window_size = window_size
+        self.stride = stride
         self.input_dim = input_dim
         self.device = device
-        self._buf: deque[torch.Tensor] = deque(maxlen=window_size)
+        self._buf: deque[torch.Tensor] = deque(maxlen=1 + (window_size - 1) * stride)
 
     def reset(self) -> None:
         self._buf.clear()
@@ -122,7 +142,7 @@ class CausalWindowBuffer:
         observation so early-episode windows still have shape T=window_size.
         """
         self._buf.append(x_t)
-        frames = list(self._buf)
+        frames = list(self._buf)[::-self.stride][:self.window_size][::-1]
         while len(frames) < self.window_size:
             frames.insert(0, frames[0])
         return torch.stack(frames, dim=1)

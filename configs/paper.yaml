@@ -8,6 +8,7 @@ sacr:
   adam_eps: 1.0e-5
   lambda_geom: 0.5
   lambda_depth: 1.0
+  require_metric_depth: true
   mu_smooth: 0.1
   depth_uncertainty: false
   lambda_unc: 0.0

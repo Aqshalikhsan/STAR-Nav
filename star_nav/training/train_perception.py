@@ -22,9 +22,10 @@ class _FrameDataset(Dataset):
     """
 
     def __init__(self, episodes: list[Episode]):
-        self.rgb, self.seg, self.depth, self.theta = [], [], [], []
+        self.rgb, self.prev_rgb, self.seg, self.depth, self.theta = [], [], [], [], []
         for ep in episodes:
             self.rgb.extend(ep.rgb)
+            self.prev_rgb.extend([ep.rgb[max(i - 1, 0)] for i in range(len(ep.rgb))])
             self.seg.extend(ep.seg_mask)
             self.depth.extend(ep.depth)
             self.theta.extend(ep.theta_corr_gt)
@@ -34,10 +35,11 @@ class _FrameDataset(Dataset):
 
     def __getitem__(self, idx):
         rgb = torch.from_numpy(self.rgb[idx]).float().permute(2, 0, 1) / 255.0
+        prev_rgb = torch.from_numpy(self.prev_rgb[idx]).float().permute(2, 0, 1) / 255.0
         seg = torch.from_numpy(self.seg[idx]).long()
         depth = torch.from_numpy(np.asarray(self.depth[idx])).float()
         theta = torch.from_numpy(self.theta[idx]).float()
-        return rgb, seg, depth, theta
+        return rgb, prev_rgb, seg, depth, theta
 
 
 def train_sacr(sacr: SACR, episodes: list[Episode], cfg, device, logger: CSVLogger) -> SACR:
@@ -49,11 +51,15 @@ def train_sacr(sacr: SACR, episodes: list[Episode], cfg, device, logger: CSVLogg
     sacr.train()
     step = 0
     for epoch in range(cfg.training.perception_epochs):
-        for rgb, seg, depth_gt, theta_gt in loader:
-            rgb, seg, depth_gt, theta_gt = rgb.to(device), seg.to(device), depth_gt.to(device), theta_gt.to(device)
+        for rgb, prev_rgb, seg, depth_gt, theta_gt in loader:
+            rgb, prev_rgb = rgb.to(device), prev_rgb.to(device)
+            seg, depth_gt, theta_gt = seg.to(device), depth_gt.to(device), theta_gt.to(device)
 
             out = sacr(rgb, need_seg=True)
+            with torch.no_grad():
+                prev_theta = sacr(prev_rgb).theta_corr
             losses = sacr_loss(out, seg, theta_gt, depth_target=depth_gt,
+                               prev_theta_corr=prev_theta,
                                lambda_geom=cfg.sacr.lambda_geom,
                                lambda_depth=getattr(cfg.sacr, "lambda_depth", 0.2),
                                lambda_unc=getattr(cfg.sacr, "lambda_unc", 0.5),

@@ -76,7 +76,24 @@ def main(argv=None):
     # carries it -- older datasets without `depth` fall back to the seg+geom path.
     has_depth = all("depth" in d.files for d in ds)
     depth = np.concatenate([d["depth"] for d in ds], axis=0) if has_depth else None
+    if getattr(cfg.sacr, "require_metric_depth", False) and not has_depth:
+        raise ValueError("Paper SACR profile requires per-pixel metric depth targets in every dataset")
     N = len(rgb)
+    # Pair each frame with its preceding observation for L_smooth. Never pair
+    # across source files or known episode boundaries.
+    prev_idx = np.arange(N)
+    offset = 0
+    for source in ds:
+        n = len(source["rgb"])
+        local = np.maximum(np.arange(n) - 1, 0)
+        if "episode_id" in source.files:
+            starts = np.r_[True, source["episode_id"][1:] != source["episode_id"][:-1]]
+            local[starts] = np.arange(n)[starts]
+        elif "pose" in source.files:
+            starts = np.r_[True, np.diff(source["pose"][:, 0]) < -5.0]
+            local[starts] = np.arange(n)[starts]
+        prev_idx[offset:offset + n] = offset + local
+        offset += n
     if len(args.data) > 1:
         print("datasets:", {p: len(d["rgb"]) for p, d in zip(args.data, ds)}, flush=True)
     rng = np.random.default_rng(cfg.seed)
@@ -113,6 +130,7 @@ def main(argv=None):
             bi = idx[b:b + args.batch]
             dt = torch.from_numpy(depth[bi]).float().to(device) if depth is not None else None
             yield (torch.from_numpy(rgb[bi]).float().permute(0, 3, 1, 2).to(device) / 255.0,
+                   torch.from_numpy(rgb[prev_idx[bi]]).float().permute(0, 3, 1, 2).to(device) / 255.0,
                    torch.from_numpy(seg[bi]).long().to(device),
                    torch.from_numpy(theta[bi]).float().to(device),
                    dt)
@@ -124,10 +142,12 @@ def main(argv=None):
     def evaluate(idx):
         sacr.eval()
         lseg, lgeom, ldep, lunc, sc, st = [], [], [], [], 0, 0
-        for r, s, th, dt in batches(idx, False):
+        for r, r_prev, s, th, dt in batches(idx, False):
             out = sacr(r, need_seg=True)
+            prev_theta = sacr(r_prev).theta_corr
             L = sacr_loss(out, s, th, depth_target=dt, lambda_geom=cfg.sacr.lambda_geom,
-                          lambda_depth=lambda_depth, lambda_unc=lambda_unc, mu_smooth=cfg.sacr.mu_smooth)
+                          lambda_depth=lambda_depth, lambda_unc=lambda_unc, mu_smooth=cfg.sacr.mu_smooth,
+                          prev_theta_corr=prev_theta)
             lseg.append(L["L_seg"].item()); lgeom.append(L["L_geom"].item())
             ldep.append(L["L_depth"].item()); lunc.append(L["L_unc"].item())
             sc += (out.seg_logits.argmax(1) == s).sum().item(); st += s.numel()
@@ -150,10 +170,13 @@ def main(argv=None):
     t0 = time.time()
     for epoch in range(start_epoch, args.epochs):
         sacr.train()
-        for r, s, th, dt in batches(tr_idx, True):
+        for r, r_prev, s, th, dt in batches(tr_idx, True):
             out = sacr(r, need_seg=True)
+            with torch.no_grad():
+                prev_theta = sacr(r_prev).theta_corr
             L = sacr_loss(out, s, th, depth_target=dt, lambda_geom=cfg.sacr.lambda_geom,
-                          lambda_depth=lambda_depth, lambda_unc=lambda_unc, mu_smooth=cfg.sacr.mu_smooth)
+                          lambda_depth=lambda_depth, lambda_unc=lambda_unc, mu_smooth=cfg.sacr.mu_smooth,
+                          prev_theta_corr=prev_theta)
             optim.zero_grad(); L["L_SACR"].backward(); optim.step()
 
         # per-epoch checkpoint (always), so a kill loses at most one epoch

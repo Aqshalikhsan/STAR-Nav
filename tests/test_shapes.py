@@ -51,6 +51,18 @@ def test_sacr_loss_runs_and_backprops():
     assert torch.isfinite(losses["L_SACR"])
 
 
+def test_sacr_temporal_smoothness_contributes_to_geometry_loss():
+    sacr = _make_sacr()
+    out = sacr(torch.rand(2, 3, IMG_H, IMG_W), need_seg=True)
+    seg = torch.zeros(2, IMG_H, IMG_W, dtype=torch.long)
+    theta = torch.zeros(2, 4)
+    base = sacr_loss(out, seg, theta, mu_smooth=0.1)
+    with_previous = sacr_loss(out, seg, theta,
+                              prev_theta_corr=out.theta_corr.detach() + 1.0,
+                              mu_smooth=0.1)
+    assert torch.allclose(with_previous["L_geom"] - base["L_geom"], torch.tensor(0.1))
+
+
 def test_camr_output_shape_and_causal_window():
     sacr = _make_sacr()
     d_s_aug = sacr.z_struct_aug_dim

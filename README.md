@@ -143,9 +143,8 @@ For the field trials reported in the revised paper, the navigation encoder,
 depth and geometry branches, CAMR, PPO policy, and shield parameters remained
 at their simulation-trained values. Only the separate semantic-mask decoder
 was adapted using public oil-palm images from other plantations. No test-corridor
-flight image was used for that adaptation. The repository also contains broader
-SACR/CAMR fine-tuning scripts for separate experiments; those scripts do not
-describe the paper's field-trial protocol.
+flight image was used for that adaptation (`scripts/finetune_sacr_real.py`,
+20 epochs at a learning rate of 1e-5, decoder only).
 
 <p align="center">
   <img src="renders/sacr_on_your_video.png" width="860" alt="SACR trunk segmentation on real FPV video"><br>
@@ -305,12 +304,11 @@ python scripts/train_camr.py --data data/sacr_gazebo_dataset.npz --epochs 60
 python scripts/train_ppo.py --curriculum --iterations 2000
 ```
 
-**Optional broader fine-tuning experiments, outside the reported field-trial
-protocol:**
+**Phase 3: adapt the segmentation decoder to real imagery** (everything else frozen):
 
 ```bash
-python scripts/finetune_sacr_real.py    # SACR on real plantation imagery
-python scripts/finetune_camr_real.py    # CAMR on real rollouts
+python scripts/finetune_sacr_real.py --config configs/paper.yaml --data data/real_sawit.npz \
+    --sacr-ckpt checkpoints/paper/sacr.pt --out checkpoints/paper/sacr_real.pt
 ```
 
 **Zigzag steering policy** (bending corridor, curriculum + moving workers):
@@ -378,16 +376,19 @@ python scripts/export_mock_trajectory.py --out renders/deploy/zigzag
 
 ### 5. Deploy to the real drone
 
-Fly a real Betaflight/iNav FPV drone from the laptop. All compute
-(SACR → CAMR → policy) runs on the laptop; the channel commands reach the radio
-through an Arduino PPM trainer-port link, then over the normal ELRS RF link.
+Fly a real iNav FPV drone from the laptop. All compute runs on the laptop:
+SACR → CAMR → policy → AGSS on the video stream, VINS-Mono on the same frames
+with the flight-controller IMU received over MAVLink (pose relative to the
+surveyed waypoints), and a horizontal-velocity PID that turns the filtered
+command into ANGLE-mode roll/pitch targets (±30°). The channel commands reach
+the radio through an Arduino PPM trainer-port link, then over the ELRS RF link.
 Manual keyboard and the policy share the exact same `rc_link`, so verify the
 chain by hand first. See [`hardware/README.md`](hardware/README.md) for wiring,
 radio setup, and the staged bring-up.
 
 ```bash
 cd hardware
-pip install pyserial pyyaml opencv-python torch
+pip install pyserial pyyaml opencv-python torch pymavlink   # + ROS 1 with VINS-Mono
 
 # packet self-test (no hardware attached):
 python laptop/rc_link.py --selftest
@@ -396,9 +397,11 @@ python laptop/rc_link.py --selftest
 python laptop/keyboard_control.py --port /dev/ttyUSB0
 
 # Mode 2: policy from the live camera feed. DRY RUN first (no serial, prints actions):
-python laptop/vision_deploy.py --source rtsp://<pi-ip>:8554/cam --no-serial
+python laptop/vision_deploy.py --source rtsp://<pi-ip>:8554/cam \
+    --waypoints <survey_waypoints_vio.csv> --no-serial
 # then PROPS OFF, Arduino connected, still disarmed:
 python laptop/vision_deploy.py --source rtsp://<pi-ip>:8554/cam \
+    --waypoints <survey_waypoints_vio.csv> --vel-pid <kp> <ki> <kd> \
     --port /dev/ttyUSB0 --hover-throttle <measured> --no-arm
 ```
 

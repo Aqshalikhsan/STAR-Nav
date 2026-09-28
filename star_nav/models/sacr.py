@@ -176,7 +176,7 @@ def sacr_loss(
     depth_target: Optional[torch.Tensor] = None,
     prev_theta_corr: Optional[torch.Tensor] = None,
     lambda_geom: float = 1.0,
-    lambda_depth: float = 0.2,
+    lambda_depth: float = 1.0,
     lambda_unc: float = 0.5,
     mu_smooth: float = 0.1,
 ) -> dict[str, torch.Tensor]:

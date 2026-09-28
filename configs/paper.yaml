@@ -5,6 +5,8 @@
 extends: default.yaml
 
 sacr:
+  feature_channels: 512        # C
+  struct_dim: 512              # d_s
   adam_eps: 1.0e-5
   lambda_geom: 0.5
   lambda_depth: 1.0
@@ -41,7 +43,14 @@ agss_ppo:
 
 env:
   name: airsim
-  max_forward_speed: 2.5
+  max_forward_speed: 2.5       # |v_x|, |v_y| limit (m/s)
+  max_vertical_speed: 1.0      # |v_z| limit (m/s)
+  max_yaw_rate_deg: 120.0
+  pose_relative_to_waypoint: true
+  pose_source: vins            # VINS-Mono on the AirSim camera + IMU
+  vins_topic: /vins_estimator/odometry
+  control_hz: 30.0
+  episode_max_steps: 3600      # 120 s timeout at 30 Hz
   reward_w_progress: 44.0508
   reward_w_smooth: 28.7415
   reward_w_alive: 1.0
@@ -49,3 +58,20 @@ env:
 
 training:
   checkpoint_dir: checkpoints/paper
+
+# Real-world adaptation: segmentation decoder only (lambda_geom = lambda_depth = 0);
+# encoder, depth branch, geometry head, gate, CAMR, policy and AGSS stay frozen.
+finetune_real:
+  seg_lr: 1.0e-5
+  epochs: 20
+  batch_size: 4
+
+# Field deployment (hardware/laptop/vision_deploy.py).
+deploy:
+  deterministic: true          # policy mean mu_t on the vehicle
+  pose_source: vins            # VINS-Mono odometry (vins_estimator/odometry)
+  vins_topic: /vins_estimator/odometry
+  mavlink_url: udpin:0.0.0.0:14550
+  max_tilt_deg: 30.0           # roll/pitch target limit of the velocity PID
+  vel_pid: null                # [kp, ki, kd] per horizontal axis (deg per m/s), tuned for the airframe
+  waypoint_radius: 1.0         # m; advance to the next surveyed waypoint inside this radius

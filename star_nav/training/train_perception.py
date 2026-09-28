@@ -61,7 +61,7 @@ def train_sacr(sacr: SACR, episodes: list[Episode], cfg, device, logger: CSVLogg
             losses = sacr_loss(out, seg, theta_gt, depth_target=depth_gt,
                                prev_theta_corr=prev_theta,
                                lambda_geom=cfg.sacr.lambda_geom,
-                               lambda_depth=getattr(cfg.sacr, "lambda_depth", 0.2),
+                               lambda_depth=getattr(cfg.sacr, "lambda_depth", 1.0),
                                lambda_unc=getattr(cfg.sacr, "lambda_unc", 0.5),
                                mu_smooth=cfg.sacr.mu_smooth)
 

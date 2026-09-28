@@ -135,7 +135,7 @@ def main(argv=None):
                    torch.from_numpy(theta[bi]).float().to(device),
                    dt)
 
-    lambda_depth = getattr(cfg.sacr, "lambda_depth", 0.2)
+    lambda_depth = getattr(cfg.sacr, "lambda_depth", 1.0)
     lambda_unc = getattr(cfg.sacr, "lambda_unc", 0.5)
 
     @torch.no_grad()

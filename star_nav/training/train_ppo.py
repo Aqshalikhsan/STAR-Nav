@@ -6,12 +6,22 @@ updated, consistent with the "perception-first" strategy (Section 3.5):
 train the representation, then optimize navigation behavior over the
 now-fixed latent belief h_t.
 
-Invariant I5 ("no gradient flows from AGSS to PPO") is implemented
+Invariant I4 ("no gradient flows from AGSS to PPO") is implemented
 literally: the log-probability used in the PPO ratio is always
 log pi_theta(a_t | h_t) for the *raw* candidate action a_t, never for the
 AGSS-projected a_safe. AGSS only changes what is actually executed in the
 environment (and therefore the observed reward/next state), not what the
 policy is credited/blamed for in the gradient.
+
+Action maps, in order: the raw Gaussian sample a_raw is clipped
+component-wise to [-1, 1] (the environment scales it by the per-axis command
+limits), AGSS then projects the lateral component. The buffer stores a_raw
+and log pi(a_raw | h_t).
+
+The corridor-complexity head c_t = sigmoid(w_c^T sg(h_t) + b_c) is trained
+jointly with PPO, with AGSS active in every rollout, by BCE against
+c_t* = clip(1 - (d_L + d_R) / W_ref, 0, 1). Its input is detached, so it has
+no gradient path into CAMR or the actor-critic.
 """
 from __future__ import annotations
 
@@ -20,7 +30,9 @@ import torch
 import torch.nn.functional as F
 
 from ..envs.base_env import BaseCorridorEnv
-from ..models.agss_ppo import ActorCritic, AGSSShield
+from typing import Optional
+
+from ..models.agss_ppo import ActorCritic, AGSSShield, ComplexityHead
 from ..models.camr import CAMR, CausalWindowBuffer
 from ..models.sacr import SACR
 from ..utils.logger import CSVLogger
@@ -45,7 +57,10 @@ def train_ppo(
     cfg,
     device: torch.device,
     logger: CSVLogger,
+    complexity_head: Optional[ComplexityHead] = None,
 ) -> ActorCritic:
+    """Pass ``complexity_head`` to train c_t jointly with PPO; its trained
+    weights are copied into ``agss`` before every projection."""
     sacr.eval()
     camr.eval()
     for p in sacr.parameters():
@@ -55,6 +70,11 @@ def train_ppo(
 
     optim = torch.optim.Adam(actor_critic.parameters(), lr=cfg.agss_ppo.lr,
                              eps=getattr(cfg.agss_ppo, "adam_eps", 1e-8))
+    c_optim = None
+    if complexity_head is not None:
+        c_optim = torch.optim.Adam(complexity_head.parameters(), lr=cfg.agss_ppo.lr,
+                                   eps=getattr(cfg.agss_ppo, "adam_eps", 1e-8))
+        agss.set_complexity_weights(complexity_head.shield_weights())
     belief_dim = 2 * cfg.camr.hidden_dim
     buffer = RolloutBuffer(belief_dim, cfg.agss_ppo.action_dim, cfg.agss_ppo.rollout_steps, device)
     rng = np.random.default_rng(cfg.seed)
@@ -85,7 +105,17 @@ def train_ppo(
 
             d_left = z_struct_aug[:, sacr.struct_dim]
             d_right = z_struct_aug[:, sacr.struct_dim + 2]
-            projection = agss.project(sample.action, h_t, d_left, d_right)
+
+            if complexity_head is not None:
+                l_c = complexity_head.loss(h_t, d_left, d_right)
+                c_optim.zero_grad()
+                l_c.backward()
+                c_optim.step()
+                agss.set_complexity_weights(complexity_head.shield_weights())
+
+            # a_t = clip(a_raw, -1, 1); the environment applies the command limits.
+            bounded = sample.action.clamp(-1.0, 1.0)
+            projection = agss.project(bounded, h_t, d_left, d_right)
             safe_action = projection["safe_action"].squeeze(0).cpu().numpy()
 
             result = env.step(safe_action)

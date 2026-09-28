@@ -6,8 +6,8 @@ Actor:  Linear(2d_h,256) -> LayerNorm -> ReLU -> Linear(256,128) ->
         a_t ~ N(mu_t, diag(sigma^2))
 Critic: identical trunk, scalar head                                 V(h_t)
 
-AGSS (deterministic, no gradient back to the actor -- Invariant I5):
-  c_t       = sigmoid(w_c^T h_t + b_c)
+AGSS (deterministic, no gradient back to the actor -- Invariant I4):
+  c_t       = sigmoid(w_c^T sg(h_t) + b_c)
   d_safe    = d_0 + alpha * c_t
   v_y_min   = -(d_L_bar - d_safe) / tau
   v_y_max   =  (d_R_bar - d_safe) / tau
@@ -169,6 +169,15 @@ class AGSSShield:
             self.w_c = w_c.detach().reshape(complexity_dim).to(device)
             self.b_c = b_c.detach().reshape(1).to(device)
             self.complexity_source = "supplied_trained_weights"
+
+    def set_complexity_weights(self, complexity_weights: tuple[torch.Tensor, torch.Tensor]) -> None:
+        """Load (w_c, b_c) from the separately supervised complexity head."""
+        w_c, b_c = complexity_weights
+        if w_c.numel() != self.w_c.numel() or b_c.numel() != 1:
+            raise ValueError("Complexity head dimensions do not match the belief state")
+        self.w_c = w_c.detach().reshape(self.w_c.shape).to(self.w_c.device)
+        self.b_c = b_c.detach().reshape(1).to(self.b_c.device)
+        self.complexity_source = "supplied_trained_weights"
 
     def complexity(self, h_t: torch.Tensor) -> torch.Tensor:
         """c_t = sigmoid(w_c^T h_t + b_c) in (0, 1)."""

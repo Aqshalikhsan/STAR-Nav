@@ -1,108 +1,75 @@
-"""Phase 3 (Algorithm tab:method-4): real-world adaptation. Fine-tunes
-SACR then CAMR on logged real-world flight data to close the
-appearance-domain gap D_app, while the PPO policy and AGSS remain frozen
-(policy transfer relies on h_t staying geometrically meaningful, not on
-re-optimizing navigation behavior in the field).
+"""Phase 3 (Algorithm tab:method-4): real-world adaptation of the semantic
+output only.
 
-Expects real-world logs already parsed into the same `Episode` structure
-used by `collect_data.py` (rgb frames, pose, imu, and a geometry target
-`theta_corr_gt` -- e.g. derived offline from a ground-truth LiDAR
-trajectory / corridor survey, since dense pixel-level segmentation labels
-are rarely available for real flights). Write your own log parser to
-produce `Episode` objects from your flight-log format (rosbag, MAVLink
-`.ulg`, etc.) and pass them to `finetune_real`.
+Only the SACR segmentation decoder (``sacr.seg_head``) is fine-tuned, with
+pixel-wise cross-entropy on labelled real oil-palm images from plantations
+other than the test corridor (lambda_geom = lambda_depth = 0). The encoder,
+depth branch, geometry head, channel gate, CAMR, policy and AGSS keep their
+simulation-trained parameters, so z_struct_aug, the actions and the metric
+depth scale are unchanged; only the reported masks change.
+
+Defaults follow the paper: 20 epochs at a learning rate of 1e-5
+(``cfg.finetune_real``).
 """
 from __future__ import annotations
 
+import numpy as np
 import torch
 import torch.nn.functional as F
 
-from ..models.camr import CAMR, camr_loss
+from ..models.camr import CAMR
 from ..models.sacr import SACR
 from ..utils.logger import CSVLogger
-from .collect_data import Episode, episode_to_tensors
 
 
-def finetune_sacr_real(sacr: SACR, episodes: list[Episode], cfg, device, logger: CSVLogger) -> SACR:
-    sacr.train()
-    optim = torch.optim.Adam(sacr.parameters(), lr=cfg.finetune_real.sacr_lr)
+def freeze_all_but_seg_decoder(sacr: SACR) -> list[torch.nn.Parameter]:
+    for prm in sacr.parameters():
+        prm.requires_grad_(False)
+    params = list(sacr.seg_head.parameters())
+    for prm in params:
+        prm.requires_grad_(True)
+    return params
 
+
+def finetune_seg_decoder_real(sacr: SACR, rgb: np.ndarray, seg: np.ndarray, cfg, device,
+                              logger: CSVLogger, ignore_index: int = 255) -> SACR:
+    """rgb: (N, H, W, 3) uint8, seg: (N, H, W) int class ids (``ignore_index`` = unlabelled)."""
+    params = freeze_all_but_seg_decoder(sacr)
+    optim = torch.optim.Adam(params, lr=getattr(cfg.finetune_real, "seg_lr", 1e-5))
+    epochs = getattr(cfg.finetune_real, "epochs", 20)
+    batch_size = getattr(cfg.finetune_real, "batch_size", 4)
+    rng = np.random.default_rng(getattr(cfg, "seed", 0))
+
+    sacr.eval()                       # frozen parts (BatchNorm/Dropout) stay in inference mode
+    sacr.seg_head.train()
     step = 0
-    for epoch in range(cfg.finetune_real.epochs):
-        for ep in episodes:
-            tensors = episode_to_tensors(ep, device)
-            batch_size = cfg.finetune_real.batch_size
-            for start in range(0, tensors["rgb"].shape[0], batch_size):
-                rgb = tensors["rgb"][start:start + batch_size]
-                theta_gt = tensors["theta_corr_gt"][start:start + batch_size]
-                if rgb.shape[0] == 0:
-                    continue
+    for epoch in range(epochs):
+        order = rng.permutation(len(rgb))
+        for start in range(0, len(order), batch_size):
+            idx = order[start:start + batch_size]
+            x = torch.from_numpy(rgb[idx]).float().permute(0, 3, 1, 2).to(device) / 255.0
+            y = torch.from_numpy(seg[idx]).long().to(device)
+            logits = sacr(x, need_seg=True).seg_logits
+            l_seg = F.cross_entropy(logits, y, ignore_index=ignore_index)
 
-                out = sacr(rgb, need_seg=False)
-                # Algorithm tab:method-4 fine-tunes SACR with Loss = L_geom
-                # only (no L_seg): real flights rarely have dense per-pixel
-                # segmentation ground truth, only geometry/pose references.
-                l_geom = F.mse_loss(out.theta_corr, theta_gt)
+            optim.zero_grad()
+            l_seg.backward()
+            optim.step()
 
-                optim.zero_grad()
-                l_geom.backward()
-                optim.step()
-
-                if step % cfg.training.log_every == 0:
-                    logger.log(step, {"L_geom_real": l_geom.item()})
-                step += 1
+            if step % cfg.training.log_every == 0:
+                logger.log(step, {"epoch": epoch, "L_seg_real": l_seg.item()})
+            step += 1
 
     sacr.eval()
-    for p in sacr.parameters():
-        p.requires_grad_(False)
+    for prm in sacr.parameters():
+        prm.requires_grad_(False)
     return sacr
 
 
-def finetune_camr_real(sacr: SACR, camr: CAMR, episodes: list[Episode], cfg, device, logger: CSVLogger) -> CAMR:
-    camr.train()
-    optim = torch.optim.Adam(camr.parameters(), lr=cfg.finetune_real.camr_lr)
-    window_size = cfg.camr.window_size
-
-    step = 0
-    for epoch in range(cfg.finetune_real.epochs):
-        for ep in episodes:
-            if len(ep.rgb) < window_size + 1:
-                continue
-            tensors = episode_to_tensors(ep, device)
-            with torch.no_grad():
-                z_struct_aug = sacr(tensors["rgb"], need_seg=False).z_struct_aug
-
-            x_seq = torch.cat([z_struct_aug, tensors["pose"], tensors["imu"]], dim=-1)
-            L = x_seq.shape[0]
-
-            for t in range(window_size - 1, L - 1):
-                window = x_seq[t - window_size + 1: t + 1].unsqueeze(0)
-                out = camr(window)
-                predicted_next = camr.predict_next(out.h_t)
-                target_next = z_struct_aug[t + 1].unsqueeze(0)
-
-                # Algorithm tab:method-4: Fine-Tune CAMR, Loss = L_pred only.
-                l_pred = F.mse_loss(predicted_next, target_next)
-
-                optim.zero_grad()
-                l_pred.backward()
-                optim.step()
-
-                if step % cfg.training.log_every == 0:
-                    logger.log(step, {"L_pred_real": l_pred.item()})
-                step += 1
-
+def finetune_real(sacr: SACR, camr: CAMR, rgb: np.ndarray, seg: np.ndarray, cfg, device, logger: CSVLogger):
+    """Adapt the segmentation decoder; CAMR (and policy/AGSS) are returned unchanged."""
+    sacr = finetune_seg_decoder_real(sacr, rgb, seg, cfg, device, logger)
     camr.eval()
-    for p in camr.parameters():
-        p.requires_grad_(False)
-    return camr
-
-
-def finetune_real(sacr: SACR, camr: CAMR, episodes: list[Episode], cfg, device, logger: CSVLogger):
-    """Sequential fine-tuning exactly as ordered in Algorithm tab:method-4:
-    freeze perception -> adapt to real observations -> (policy/AGSS stay
-    frozen throughout, so they are simply not passed into this function).
-    """
-    sacr = finetune_sacr_real(sacr, episodes, cfg, device, logger)
-    camr = finetune_camr_real(sacr, camr, episodes, cfg, device, logger)
+    for prm in camr.parameters():
+        prm.requires_grad_(False)
     return sacr, camr

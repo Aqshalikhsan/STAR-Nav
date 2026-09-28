@@ -17,12 +17,12 @@ wiring change.
 ```
 [ keyboard_control.py ]──┐   MANUAL (WASD/qe/rf)
                          ├─▶ rc_link.py ─USB─▶ Arduino(ppm_trainer.ino) ─PPM(D9→TIP)─▶ radio TRAINER port ─ELRS─▶ drone
-[ vision_deploy.py ]─────┘   POLICY (camera→SACR→CAMR→PPO)
+[ vision_deploy.py ]─────┘   POLICY (camera→SACR→CAMR→PPO→AGSS→velocity PID)
 ```
 | Mode | Entry point | Status |
 |---|---|---|
 | **1. Manual keyboard** | `laptop/keyboard_control.py` | ✅ complete, ready to run |
-| **2. Policy (vision)** | `laptop/vision_deploy.py` (via `policy_to_channels.py`) | ✅ plumbing complete; needs sim2real tuning to fly well |
+| **2. Policy (vision)** | `laptop/vision_deploy.py` (via `policy_to_channels.py`) | camera + VINS-Mono pose + MAVLink IMU → AGSS-filtered velocity → PID → sticks |
 
 Run **one at a time** (both write the same serial/Arduino). Order: keyboard first
 (verify chain + channel directions), then policy.
@@ -35,8 +35,9 @@ Run **one at a time** (both write the same serial/Arduino). Order: keyboard firs
 | `arduino/ppm_trainer/ppm_trainer.ino` | Arduino firmware: serial packets → 8-ch PPM on **D9**, with link-loss **failsafe** |
 | `laptop/rc_link.py` | the one serial/comms layer (`send_us` / `send_norm`); everything upstream uses this |
 | `laptop/keyboard_control.py` | **Mode 1** — manual flight from the keyboard |
-| `laptop/policy_to_channels.py` | maps a policy action `[vx,vy,vz,yaw]` → RC sticks |
-| `laptop/vision_deploy.py` | **Mode 2** — full loop: camera stream → SACR → CAMR → policy → `rc_link` |
+| `laptop/policy_to_channels.py` | horizontal-velocity PID (VINS-Mono velocity feedback) → roll/pitch targets (±30°), yaw/throttle → RC sticks |
+| `laptop/mavlink_imu.py` | flight-controller IMU over MAVLink for CAMR, republished for VINS-Mono |
+| `laptop/vision_deploy.py` | **Mode 2** — full loop: camera stream → SACR → CAMR → policy → AGSS → PID → `rc_link` |
 | `config/channels.yaml` | channel order / endpoints / serial port / failsafe — keep in sync with the `.ino` **and** your radio |
 
 ---
@@ -91,9 +92,11 @@ python laptop/rc_link.py --selftest
 python laptop/keyboard_control.py --port /dev/ttyUSB0
 
 # MODE 2 — policy, DRY RUN first (prints actions, no drone, no serial):
-python laptop/vision_deploy.py --source rtsp://192.168.1.50:8554/cam --no-serial
+python laptop/vision_deploy.py --source rtsp://192.168.1.50:8554/cam \
+    --waypoints <survey_waypoints_vio.csv> --no-serial
 # then PROPS OFF with the Arduino:
 python laptop/vision_deploy.py --source rtsp://192.168.1.50:8554/cam \
+    --waypoints <survey_waypoints_vio.csv> --vel-pid <kp> <ki> <kd> \
     --port /dev/ttyUSB0 --hover-throttle <measured> --no-arm
 ```
 
